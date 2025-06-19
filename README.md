@@ -1,8 +1,18 @@
 # 🧠 AI-Powered Attendance System using Face Recognition
 
-A real-time facial recognition system to automate attendance in schools, colleges, or offices. Supports both **students (per class period)** and **teachers (once per day)**. Includes **voice confirmation (Windows)** and **CSV attendance logs**.
+A real-time AI-powered attendance system that uses face recognition through a webcam to **automate attendance** for both **students (per class period)** and **teachers (once per day)**. The system includes **voice confirmation** (Windows only), **CSV logging**, and **schedule customization** — all in a simple Streamlit web app.
 
-> Built using Python, Streamlit, and FaceNet. Ensures non-duplicate, secure, and organized attendance.
+This project demonstrates a practical use of machine learning, computer vision, and user interface design to solve a real-world problem in education and corporate environments.
+
+---
+
+## 📖 About This Project
+
+This system is designed to eliminate the manual and error-prone process of recording attendance. It works by recognizing the user's face from a live webcam feed and automatically logging their name, time, and subject in a structured CSV file.
+
+- **Students**: Attendance is recorded for each subject period.
+- **Teachers**: Attendance is recorded only once per day.
+- The system prevents **duplicate entries**, supports **schedule upload via CSV**, and offers **voice-based confirmation** after successful recognition.
 
 ---
 
@@ -12,10 +22,12 @@ A real-time facial recognition system to automate attendance in schools, college
 - 🧑‍🎓 Student attendance by class period
 - 👨‍🏫 Teacher attendance once per day
 - ❗ Prevents duplicate entries
-- 🔊 Voice confirmation (Windows only)
-- 🗃 Attendance logs auto-saved as CSV
-- 📅 Manual or CSV-based schedule input
-- 🧠 Face embeddings using `facenet-pytorch`
+- 🔊 Voice confirmation when marked (Windows only)
+- 🗃 CSV logs auto-saved daily
+- 📅 Custom class schedules (manual or CSV upload)
+- 🧠 Face recognition using `facenet-pytorch`
+- ⚙️ Fully local: No cloud API or internet dependency
+- 💻 Simple, interactive web interface using Streamlit
 
 ---
 
@@ -23,16 +35,17 @@ A real-time facial recognition system to automate attendance in schools, college
 
 ```
 ai-attendance-system/
-├── app.py                  # Main Streamlit app (UI and logic)
-├── generate_embeddings.py  # Script to generate face embeddings from images
-├── dataset/                # Folders of registered users (1 per person)
-│   └── John Doe/           # Example: contains 1.jpg, 2.jpg, ..., 30.jpg
-├── embeddings.npy          # Face embeddings generated from dataset
-├── attendance_logs/        # Auto-generated daily CSV attendance logs
+├── app.py                   # Main Streamlit app for marking attendance
+├── face_captured_app.py     # Streamlit UI to collect face data from webcam
+├── generate_embeddings.py   # Script to create/update face embeddings
+├── dataset/                 # Folder for registered users' face images
+│   └── John Doe/            # Example: contains 1.jpg, 2.jpg, ..., 30.jpg
+├── embeddings.npy           # NumPy array of all face embeddings
+├── attendance_logs/         # Automatically saved daily attendance CSVs
 │   ├── student_attendance_YYYY-MM-DD.csv
 │   └── teacher_attendance_YYYY-MM-DD.csv
-├── requirements.txt        # Python dependencies
-└── README.md               # This file
+├── requirements.txt         # Python package dependencies
+└── README.md                # Project documentation (this file)
 ```
 
 ---
@@ -66,12 +79,33 @@ pip install -r requirements.txt
 
 ---
 
-## 👤 Add Students or Teachers
+## 📸 Collecting Face Data via UI
 
-1. Inside `dataset/`, create a folder named after the person  
+Instead of manually placing images in `dataset/`, you can run the face capture UI:
+
+```bash
+streamlit run face_captured_app.py
+```
+
+This interface allows you to:
+- Capture images directly from the webcam
+- Save them under a named folder inside `dataset/`
+- Automatically collect ~30 images per person for training
+
+After capturing faces, update the embeddings by running:
+
+```bash
+python generate_embeddings.py
+```
+
+---
+
+## 👤 Add Students or Teachers (Manual Method)
+
+1. Inside the `dataset/` folder, create a folder with the person’s **full name**  
    Example: `dataset/Krishnagopal Jay/`
 
-2. Add at least **30 clear images** of the person’s face (1 face per image)
+2. Add **30+ clear face images** of that person (1 face per image)
 
 3. Run:
 
@@ -79,30 +113,30 @@ pip install -r requirements.txt
 python generate_embeddings.py
 ```
 
-This will generate `embeddings.npy` for face recognition.
+This script generates `embeddings.npy` for face matching.
 
 ---
 
-## ▶️ Run the App
+## ▶️ Run the Attendance App
 
 ```bash
 streamlit run app.py
 ```
 
-Select:
+From the web interface, choose:
 - `Student` → Period-wise attendance
-- `Teacher` → Once-daily attendance
+- `Teacher` → Daily attendance (once)
 
 ---
 
-## 🗓 Class Period Setup
+## 🗓 Schedule Setup
 
-### ✅ Option 1: Manual Input
-Enter periods and timings via the UI.
+### ✅ Option 1: Manual Entry
+Add subjects and timings directly inside the app.
 
-### 📁 Option 2: Upload CSV
+### 📁 Option 2: Upload CSV Schedule
 
-Example format:
+Example `schedule.csv`:
 
 ```csv
 Subject,Start,End
@@ -111,26 +145,26 @@ Physics,10:00,10:45
 Break,10:45,11:00
 ```
 
-Upload this file inside the app.
+Upload via the Streamlit interface when prompted.
 
 ---
 
 ## 🔊 Voice Confirmation (Windows Only)
 
-When a face is recognized, the app will say:
+When attendance is successfully marked, the system speaks:
 
-> "Attendance marked for Krishnagopal Jay"
+> “Attendance marked for Krishnagopal Jay”
 
 Make sure:
-- Your speakers are ON
-- You're on **Windows**
-- `pyttsx3` is installed (already in `requirements.txt`)
+- Your device has working speakers
+- `pyttsx3` is installed (already included)
+- You are running the system on Windows OS
 
 ---
 
 ## 🗃 Attendance Logs
 
-CSV logs are automatically saved in `attendance_logs/`:
+All logs are stored in the `attendance_logs/` folder:
 
 ```
 attendance_logs/
@@ -138,34 +172,34 @@ attendance_logs/
 ├── teacher_attendance_YYYY-MM-DD.csv
 ```
 
-Each record includes name, time, subject, and role.
+Each row contains: **Name, Role, Time, Subject (if applicable)**.
 
 ---
 
-## 📌 System Behavior
+## 📌 Behavior & Constraints
 
-- ✅ One face per image
-- 🔁 No duplicate entries per period/day
-- ⏰ Student attendance only within valid time range
-- 🧠 Clear images = higher recognition accuracy
-- 🔊 Voice confirmation available only on Windows
+- 🧍 One face per image (no group photos)
+- ✅ Only one attendance per person per period/day
+- ⏰ Student attendance allowed **only during scheduled time slots**
+- 🔁 Embeddings must be updated when adding new users
+- 🎯 Recognition accuracy improves with clear, consistent images
 
 ---
 
 ## 🧰 Troubleshooting
 
-| Issue                    | Solution |
-|--------------------------|----------|
-| Voice not working        | Ensure `pyttsx3` is installed and speakers are active |
-| Face not recognized      | Use better image quality and lighting |
-| CSV write error          | Close the CSV file in Excel or other programs |
-| Streamlit not launching  | Ensure virtual env is activated and run `streamlit run app.py` |
+| Issue | Possible Solution |
+|-------|-------------------|
+| Voice not working | Ensure you're on Windows and speakers are on |
+| Face not recognized | Add better images (front-facing, well-lit) |
+| Can't write CSV | Close the CSV file in Excel and try again |
+| App not launching | Run `streamlit run app.py` in an active environment |
 
 ---
 
 ## 📦 Requirements
 
-These are included in `requirements.txt`:
+Your `requirements.txt` includes:
 
 ```
 streamlit
@@ -178,7 +212,7 @@ scikit-learn
 pyttsx3
 ```
 
-Install with:
+Install using:
 
 ```bash
 pip install -r requirements.txt
@@ -186,32 +220,25 @@ pip install -r requirements.txt
 
 ---
 
-## 📜 License
+## 🧪 Technologies Used
 
-Licensed under the **MIT License**.  
-Use responsibly and with user consent when collecting facial data.
-
----
-
-## 🙋‍♂️ Need Help?
-
-- Open an [Issue](https://github.com/your-username/ai-attendance-system/issues)
-- Contact: your.email@example.com
-
----
-
-## 🙌 Credits
-
-- 👤 Facial Recognition: [facenet-pytorch](https://github.com/timesler/facenet-pytorch)
-- 🧠 Voice Engine: [pyttsx3](https://pypi.org/project/pyttsx3/)
-- 📱 UI: [Streamlit](https://streamlit.io)
+| Component | Library |
+|----------|---------|
+| Face Recognition | `facenet-pytorch` |
+| Webcam Feed | `opencv-python` |
+| Data Handling | `numpy`, `pandas` |
+| UI | `streamlit` |
+| Voice Feedback | `pyttsx3` |
+| Face Matching | `scikit-learn` cosine similarity |
 
 ---
 
-## 📹 Demo GIF (Optional)
+## 🧩 Possible Extensions
 
-If available, add a preview like this:
+- Admin dashboard for report generation
+- Attendance heatmaps or visual analytics
+- Google Sheets or cloud backup integration
+- OTP/email-based authentication
+- Mobile-friendly version or Android app
 
-```markdown
-![Demo Preview](demo.gif)
-```
+---
