@@ -18,7 +18,7 @@ A smart, real-time attendance system using facial recognition via webcam. This s
 ---
 
 ## 🗂 Project Structure
-
+`
 
 📁 ai-attendance-system/
 ├── app.py                      # Streamlit frontend
@@ -38,7 +38,7 @@ A smart, real-time attendance system using facial recognition via webcam. This s
 ## How to Run
 
 ### 1. Clone this Repository
-
+`
 bash
 git clone https://github.com/your-username/ai-attendance-system.git
 cd ai-attendance-system
