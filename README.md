@@ -6,7 +6,7 @@ This project demonstrates a practical use of machine learning, computer vision, 
 
 ---
 
-## 📖 About This Project
+## About This Project
 
 This system is designed to eliminate the manual and error-prone process of recording attendance. It works by recognizing the user's face from a live webcam feed and automatically logging their name, time, and subject in a structured CSV file.
 
@@ -16,7 +16,7 @@ This system is designed to eliminate the manual and error-prone process of recor
 
 ---
 
-## ✨ Features
+## Features
 
 - Real-time face recognition via webcam
 - Student attendance by class period
@@ -50,7 +50,7 @@ ai-attendance-system/
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Clone the Repository
 
@@ -117,7 +117,7 @@ This script generates `embeddings.npy` for face matching.
 
 ---
 
-## ▶️ Run the Attendance App
+## Run the Attendance App
 
 ```bash
 streamlit run app.py
@@ -149,7 +149,7 @@ Upload via the Streamlit interface when prompted.
 
 ---
 
-## 🔊 Voice Confirmation (Windows Only)
+## Voice Confirmation (Windows Only)
 
 When attendance is successfully marked, the system speaks:
 
@@ -162,7 +162,7 @@ Make sure:
 
 ---
 
-## 🗃 Attendance Logs
+## Attendance Logs
 
 All logs are stored in the `attendance_logs/` folder:
 
