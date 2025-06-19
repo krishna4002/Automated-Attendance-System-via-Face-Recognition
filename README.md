@@ -18,20 +18,20 @@ This system is designed to eliminate the manual and error-prone process of recor
 
 ## ✨ Features
 
-- 📸 Real-time face recognition via webcam
-- 🧑‍🎓 Student attendance by class period
-- 👨‍🏫 Teacher attendance once per day
-- ❗ Prevents duplicate entries
-- 🔊 Voice confirmation when marked (Windows only)
-- 🗃 CSV logs auto-saved daily
-- 📅 Custom class schedules (manual or CSV upload)
-- 🧠 Face recognition using `facenet-pytorch`
-- ⚙️ Fully local: No cloud API or internet dependency
-- 💻 Simple, interactive web interface using Streamlit
+- Real-time face recognition via webcam
+- Student attendance by class period
+- Teacher attendance once per day
+- Prevents duplicate entries
+- Voice confirmation when marked (Windows only)
+- CSV logs auto-saved daily
+- Custom class schedules (manual or CSV upload)
+- Face recognition using `facenet-pytorch`
+- Fully local: No cloud API or internet dependency
+- Simple, interactive web interface using Streamlit
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 ai-attendance-system/
@@ -100,7 +100,7 @@ python generate_embeddings.py
 
 ---
 
-## 👤 Add Students or Teachers (Manual Method)
+## Add Students or Teachers (Manual Method)
 
 1. Inside the `dataset/` folder, create a folder with the person’s **full name**  
    Example: `dataset/Krishnagopal Jay/`
@@ -129,12 +129,12 @@ From the web interface, choose:
 
 ---
 
-## 🗓 Schedule Setup
+## Schedule Setup
 
-### ✅ Option 1: Manual Entry
+### Option 1: Manual Entry
 Add subjects and timings directly inside the app.
 
-### 📁 Option 2: Upload CSV Schedule
+### Option 2: Upload CSV Schedule
 
 Example `schedule.csv`:
 
@@ -176,17 +176,17 @@ Each row contains: **Name, Role, Time, Subject (if applicable)**.
 
 ---
 
-## 📌 Behavior & Constraints
+## Behavior & Constraints
 
-- 🧍 One face per image (no group photos)
-- ✅ Only one attendance per person per period/day
-- ⏰ Student attendance allowed **only during scheduled time slots**
-- 🔁 Embeddings must be updated when adding new users
-- 🎯 Recognition accuracy improves with clear, consistent images
+- One face per image (no group photos)
+- Only one attendance per person per period/day
+- Student attendance allowed **only during scheduled time slots**
+- Embeddings must be updated when adding new users
+- Recognition accuracy improves with clear, consistent images
 
 ---
 
-## 🧰 Troubleshooting
+## Troubleshooting
 
 | Issue | Possible Solution |
 |-------|-------------------|
@@ -197,7 +197,7 @@ Each row contains: **Name, Role, Time, Subject (if applicable)**.
 
 ---
 
-## 📦 Requirements
+## Requirements
 
 Your `requirements.txt` includes:
 
@@ -220,7 +220,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🧪 Technologies Used
+## Technologies Used
 
 | Component | Library |
 |----------|---------|
@@ -233,7 +233,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🧩 Possible Extensions
+## Possible Extensions
 
 - Admin dashboard for report generation
 - Attendance heatmaps or visual analytics
