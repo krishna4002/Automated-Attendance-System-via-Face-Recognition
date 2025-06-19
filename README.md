@@ -39,7 +39,7 @@ ai-attendance-system/
 ├── face_captured_app.py     # Streamlit UI to collect face data from webcam
 ├── generate_embeddings.py   # Script to create/update face embeddings
 ├── dataset/                 # Folder for registered users' face images
-│   └── John Doe/            # Example: contains 1.jpg, 2.jpg, ..., 30.jpg
+│   └── Krishnagopal Jay/            # Example: contains 1.jpg, 2.jpg, ..., 30.jpg
 ├── embeddings.npy           # NumPy array of all face embeddings
 ├── attendance_logs/         # Automatically saved daily attendance CSVs
 │   ├── student_attendance_YYYY-MM-DD.csv
