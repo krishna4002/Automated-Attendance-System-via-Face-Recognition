@@ -56,7 +56,7 @@ ai-attendance-system/
 
 ```bash
 git clone https://github.com/krishna4002/AI-Powered-Attendance-System.git
-cd ai-attendance-system
+cd AI-Powered-Attendance-System
 ```
 
 ### 2. (Optional) Create and Activate Virtual Environment
