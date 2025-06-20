@@ -55,7 +55,7 @@ ai-attendance-system/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/ai-attendance-system.git
+git clone https://github.com/krishna4002/AI-Powered-Attendance-System.git
 cd ai-attendance-system
 ```
 
