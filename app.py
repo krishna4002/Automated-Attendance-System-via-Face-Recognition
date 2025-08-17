@@ -1,5 +1,4 @@
-# app.py — Real-time Attendance with WebRTC + SQLite (Asia/Kolkata)
-
+# app.py — Real-time Attendance with WebRTC + Robust embeddings.npy loader
 import os
 import cv2
 import numpy as np
@@ -23,19 +22,16 @@ import av
 # =============================
 # APP CONFIG
 # =============================
-
 st.set_page_config(page_title="AI Attendance System", layout="wide")
 TZ = pytz.timezone("Asia/Kolkata")
 DB_NAME = "attendance.db"
-os.makedirs("attendance_logs", exist_ok=True)  # kept if you still want csv exports quickly
+os.makedirs("attendance_logs", exist_ok=True)
 _db_lock = threading.Lock()
 
 # =============================
 # AUDIO (OPTIONAL)
 # =============================
-
 def play_audio(text):
-    """Non-blocking best-effort voice feedback."""
     try:
         if platform.system() == "Windows":
             engine = pyttsx3.init()
@@ -49,9 +45,7 @@ def play_audio(text):
 # =============================
 # DB HELPERS (SQLite)
 # =============================
-
 def get_conn():
-    # check_same_thread=False allows usage in WebRTC worker thread
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 def init_db():
@@ -62,16 +56,17 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             role TEXT NOT NULL CHECK (role IN ('Student','Teacher')),
-            period TEXT,                     -- NULL for Teacher
-            similarity REAL,                 -- similarity score for proof
-            ts_local TEXT NOT NULL,          -- ISO timestamp in Asia/Kolkata
-            date_local TEXT NOT NULL,        -- YYYY-MM-DD (Asia/Kolkata)
-            time_local TEXT NOT NULL         -- HH:MM:SS (Asia/Kolkata)
+            period TEXT,
+            similarity REAL,
+            ts_local TEXT NOT NULL,
+            date_local TEXT NOT NULL,
+            time_local TEXT NOT NULL
         )
         """)
-        # Unique constraints to prevent duplicates
+        # indexes to reduce duplicates (INSERT OR IGNORE used)
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_student ON attendance(name, role, date_local, period)")
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_teacher ON attendance(name, role, date_local) WHERE period IS NULL")
+        # teacher uniqueness — period will be NULL
+        # Not all SQLite versions allow partial index with WHERE; keep simple uniqueness handled by INSERT OR IGNORE
         conn.commit()
 
 def mark_attendance(name: str, role: str, period: str | None, similarity: float | None = None):
@@ -82,7 +77,6 @@ def mark_attendance(name: str, role: str, period: str | None, similarity: float 
     with _db_lock:
         with get_conn() as conn:
             c = conn.cursor()
-            # INSERT OR IGNORE due to unique indexes
             c.execute("""
                 INSERT OR IGNORE INTO attendance (name, role, period, similarity, ts_local, date_local, time_local)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -107,39 +101,103 @@ def fetch_attendance(date_filter: str | None = None, role_filter: str | None = N
     return df
 
 # =============================
-# MODELS / EMBEDDINGS
+# EMBEDDING LOADER + MODELS
 # =============================
+def _load_embeddings_any(path: str):
+    """
+    Robust loader for embeddings.npy.
+    Supports:
+      - dict { name: embedding }  (embedding: (512,) or (k,512))
+      - dict { 'names': [...], 'embeddings': [[...], ...] }
+      - ndarray (N,512)  -> will assign placeholder names ID_0...
+      - list of embeddings (N,512)
+    Returns: (names_list, embeddings_array_normalized) where embeddings_array shape (N,512)
+    """
+    if not os.path.exists(path):
+        return [], np.empty((0,512), dtype=np.float32)
+
+    try:
+        loaded = np.load(path, allow_pickle=True)
+    except Exception as e:
+        st.error(f"Failed to load embeddings file: {e}")
+        return [], np.empty((0,512), dtype=np.float32)
+
+    # Many .npy files are saved as a pickled object, so .item() may work
+    try:
+        obj = loaded.item()
+    except Exception:
+        obj = loaded
+
+    names = []
+    embs = []
+
+    if isinstance(obj, dict):
+        # case: {'names': [...], 'embeddings': [...]}
+        if 'names' in obj and 'embeddings' in obj:
+            names = list(obj['names'])
+            embs = np.asarray(obj['embeddings'], dtype=np.float32)
+        else:
+            # assume mapping name -> embedding or name -> list of embeddings
+            for k, v in obj.items():
+                arr = np.asarray(v, dtype=np.float32)
+                if arr.ndim == 1 and arr.shape[0] == 512:
+                    names.append(str(k))
+                    embs.append(arr)
+                elif arr.ndim == 2 and arr.shape[1] == 512:
+                    # multiple stored embeddings for same name -> average them
+                    names.append(str(k))
+                    embs.append(arr.mean(axis=0))
+                else:
+                    # unexpected shape; skip
+                    continue
+            if len(embs) > 0:
+                embs = np.vstack(embs)
+    elif isinstance(obj, np.ndarray) or isinstance(obj, list) or isinstance(obj, tuple):
+        arr = np.asarray(obj, dtype=np.float32)
+        if arr.ndim == 2 and arr.shape[1] == 512:
+            embs = arr
+            names = [f"ID_{i}" for i in range(arr.shape[0])]
+        elif arr.ndim == 1 and arr.shape[0] == 512:
+            embs = arr.reshape(1, -1)
+            names = ["ID_0"]
+        else:
+            st.warning("embeddings.npy format not recognized (unexpected array shape). Please provide either dict{name:embedding} or dict{'names','embeddings'}.")
+            return [], np.empty((0,512), dtype=np.float32)
+    else:
+        st.warning("embeddings.npy format not supported.")
+        return [], np.empty((0,512), dtype=np.float32)
+
+    # L2 normalize gallery embeddings (row-wise)
+    norms = np.linalg.norm(embs, axis=1, keepdims=True)
+    embs_norm = embs / (norms + 1e-12)
+    return names, embs_norm
 
 @st.cache_resource(show_spinner=False)
-def load_models_and_embeddings():
+def load_models_and_embeddings(path='embeddings.npy'):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mtcnn = MTCNN(image_size=160, margin=20, min_face_size=40, device=device)
     model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
-    if not os.path.exists('embeddings.npy'):
-        st.error("`embeddings.npy` not found. Please generate embeddings before running the app.")
-        return device, mtcnn, model, {}
+    names, embs = _load_embeddings_any(path)
+    return device, mtcnn, model, names, embs
 
-    embedding_dict = np.load('embeddings.npy', allow_pickle=True).item()
-    # embedding_dict expected as { name: (512,) ndarray } OR name->list
-    # normalize stored embeddings once for consistent cosine similarity
-    normalized = {}
-    for name, emb in embedding_dict.items():
-        arr = np.asarray(emb, dtype=np.float32).reshape(1, -1)
-        # L2-normalize reference embeddings
-        arr = arr / (np.linalg.norm(arr, axis=1, keepdims=True) + 1e-12)
-        normalized[name] = arr.squeeze(0)
-    return device, mtcnn, model, normalized
-
-device, mtcnn, model, embedding_dict = load_models_and_embeddings()
+device, mtcnn, model, names_list, gallery_embs = load_models_and_embeddings('embeddings.npy')
 init_db()
 
-# =============================
-# UTILITY: SCHEDULE + RECOGNITION
-# =============================
+# show a small preview in UI
+if len(names_list) == 0:
+    st.sidebar.error("No embeddings loaded. Please ensure embeddings.npy exists and is in supported format.")
+else:
+    st.sidebar.success(f"Loaded {len(names_list)} identities")
+    # show first few names
+    st.sidebar.text("First names:")
+    for n in names_list[:8]:
+        st.sidebar.text(f" • {n}")
 
+# =============================
+# UTILS: schedule + recognition
+# =============================
 def get_current_period(schedule: dict):
-    """Return current period name or None if outside all ranges (Asia/Kolkata)."""
     if not schedule:
         return None
     now = datetime.now(TZ).time()
@@ -148,27 +206,25 @@ def get_current_period(schedule: dict):
             return period_name
     return None
 
-def recognize_face(embedding: np.ndarray, embedding_dict: dict, threshold: float = 0.75):
+def recognize_face_from_embedding(emb: np.ndarray, names, gallery_embs, threshold: float):
     """
-    Return (best_name, similarity) if similarity exceeds threshold, else (None, best_similarity).
-    embedding: (1,512)
+    emb: ndarray shape (1,512) or (512,)
+    gallery_embs: (N,512) normalized
+    returns (name_or_None, best_similarity)
     """
-    if not embedding_dict:
+    if gallery_embs.size == 0 or len(names) == 0:
         return None, 0.0
-
-    # L2-normalize probe embedding for cosine similarity stability
-    emb = embedding / (np.linalg.norm(embedding, axis=1, keepdims=True) + 1e-12)
-
-    best_name, best_sim = None, -1.0
-    for name, ref_emb in embedding_dict.items():
-        # ref_emb is (512,), turn into (1,512)
-        sim = cosine_similarity(emb, ref_emb.reshape(1, -1))[0][0]
-        if sim > best_sim:
-            best_name, best_sim = name, sim
-
+    probe = np.asarray(emb, dtype=np.float32).reshape(1, -1)
+    probe = probe / (np.linalg.norm(probe, axis=1, keepdims=True) + 1e-12)
+    sims = np.dot(probe, gallery_embs.T)[0]  # cosine similarities
+    idx = int(np.argmax(sims))
+    best_sim = float(sims[idx])
     if best_sim >= threshold:
-        return best_name, float(best_sim)
-    return None, float(best_sim)
+        return names[idx], best_sim
+    return None, best_sim
+
+def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
+    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
 def parse_schedule_csv(csv_file):
     df = pd.read_csv(csv_file)
@@ -180,14 +236,10 @@ def parse_schedule_csv(csv_file):
         schedule[name] = (start, end)
     return schedule
 
-def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
-    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-
 # =============================
-# UI: HEADER + SIDEBAR
+# UI: header + sidebar
 # =============================
-
-st.title("🧠 AI-Powered Attendance System (Real-Time, SQLite)")
+st.title("🧠 AI-Powered Attendance System (Real-Time, Robust Embeddings)")
 
 left, right = st.columns([3, 2])
 with right:
@@ -197,10 +249,9 @@ with right:
 mode = st.sidebar.radio("Choose Role", ["Student", "Teacher"])
 today_local = datetime.now(TZ).strftime("%Y-%m-%d")
 
-st.sidebar.subheader("🗂 Schedule Input Method")
+st.sidebar.subheader("🗂 Schedule Input")
 schedule_option = st.sidebar.radio("Input class periods?", ["Manual", "Upload CSV"])
 class_schedule = {}
-
 if schedule_option == "Manual":
     st.sidebar.subheader("🕒 Class Period Configuration")
     num_periods = st.sidebar.number_input("Number of Periods", min_value=1, max_value=10, value=3)
@@ -217,20 +268,20 @@ else:
     if csv_file is not None:
         try:
             class_schedule = parse_schedule_csv(csv_file)
-            st.sidebar.success("✅ Schedule Loaded from CSV")
+            st.sidebar.success("✅ Schedule Loaded")
         except Exception as e:
             st.sidebar.error(f"Failed to parse CSV: {e}")
 
 st.sidebar.markdown("---")
 capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
-st.sidebar.caption("Use Local only on your own machine. On cloud, keep Browser (WebRTC).")
+threshold = st.sidebar.slider("Similarity threshold", 0.50, 0.95, 0.75, 0.01)
+st.sidebar.caption("Lower threshold = more matches (but more false positives).")
+
+_last_event = st.empty()  # for live recognition proof in UI
 
 # =============================
-# WEBRTC PROCESSOR
+# WEBRTC processor
 # =============================
-
-_last_event = st.empty()  # live recognition proof
-
 class AttendanceProcessor(VideoProcessorBase):
     def __init__(self, role, class_schedule):
         self.role = role
@@ -238,8 +289,6 @@ class AttendanceProcessor(VideoProcessorBase):
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-
-        # Face detection (MTCNN expects PIL RGB)
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img_pil = Image.fromarray(rgb)
         face = mtcnn(img_pil)
@@ -248,40 +297,31 @@ class AttendanceProcessor(VideoProcessorBase):
             face = face.unsqueeze(0).to(device)
             with torch.no_grad():
                 emb = model(face).cpu().numpy()  # (1,512)
-
-            name, sim = recognize_face(emb, embedding_dict, threshold=0.75)
-
+            name, sim = recognize_face_from_embedding(emb, names_list, gallery_embs, threshold)
             if self.role == "Student":
                 period = get_current_period(self.class_schedule)
                 if name and period:
-                    # mark into DB (Asia/Kolkata)
                     mark_attendance(name, "Student", period, sim)
-                    draw_label(img, f"{name} ({sim:.2f}) - {period}", color=(0, 200, 0))
-                    _last_event.info(f"✅ Marked: **{name}** • **{period}** • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
-                    # Optional voice
-                    # play_audio(f"Attendance marked for {name}")
+                    draw_label(img, f"{name} ({sim:.2f}) - {period}", color=(0,200,0))
+                    _last_event.info(f"✅ Marked: {name} • {period} • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
                 elif name and period is None:
-                    draw_label(img, f"{name} ({sim:.2f}) - Not In Period", color=(0, 165, 255))
+                    draw_label(img, f"{name} ({sim:.2f}) - Not In Period", color=(0,165,255))
                 else:
-                    draw_label(img, f"Unknown (best sim {sim:.2f})", color=(0, 0, 255))
-
-            elif self.role == "Teacher":
+                    draw_label(img, f"Unknown (best sim {sim:.2f})", color=(0,0,255))
+            else:  # Teacher
                 if name:
                     mark_attendance(name, "Teacher", None, sim)
-                    draw_label(img, f"{name} ({sim:.2f})", color=(255, 0, 0))
-                    _last_event.info(f"✅ Marked: **{name}** • **Teacher** • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
-                    # play_audio(f"Attendance marked for {name}")
+                    draw_label(img, f"{name} ({sim:.2f})", color=(255,0,0))
+                    _last_event.info(f"✅ Marked: {name} • Teacher • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
                 else:
-                    draw_label(img, f"Unknown (best sim {sim:.2f})", color=(0, 0, 255))
+                    draw_label(img, f"Unknown (best sim {sim:.2f})", color=(0,0,255))
         else:
-            draw_label(img, "No face detected", color=(0, 0, 255))
-
+            draw_label(img, "No face detected", color=(0,0,255))
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 # =============================
-# MAIN LAYOUT: CAMERA + RECORDS
+# MAIN layout
 # =============================
-
 tab_live, tab_records = st.tabs(["🎥 Live Recognition", "📑 Attendance Records"])
 
 with tab_live:
@@ -297,7 +337,7 @@ with tab_live:
             media_stream_constraints={"video": True, "audio": False},
             video_processor_factory=lambda: AttendanceProcessor(mode, class_schedule),
         )
-        st.info("Using your **browser camera** via WebRTC. Please allow camera access when prompted.")
+        st.info("Using your browser camera via WebRTC. Please allow camera access when prompted.")
     else:
         st.warning("Local camera selected. This only works on your own machine (not on cloud).")
         run_local = st.checkbox("Start Local Webcam")
@@ -318,25 +358,25 @@ with tab_live:
                         face = face.unsqueeze(0).to(device)
                         with torch.no_grad():
                             emb = model(face).cpu().numpy()
-                        name, sim = recognize_face(emb, embedding_dict, threshold=0.75)
+                        name, sim = recognize_face_from_embedding(emb, names_list, gallery_embs, threshold)
                         if mode == "Student":
                             period = get_current_period(class_schedule)
                             if name and period:
                                 mark_attendance(name, "Student", period, sim)
                                 label = f"{name} ({sim:.2f}) - {period}"
-                                _last_event.info(f"✅ Marked: **{name}** • **{period}** • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
+                                _last_event.info(f"✅ Marked: {name} • {period} • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
                             elif name and period is None:
                                 label = f"{name} ({sim:.2f}) - Not In Period"
                             else:
                                 label = f"Unknown (best sim {sim:.2f})"
-                        else:  # Teacher
+                        else:
                             if name:
                                 mark_attendance(name, "Teacher", None, sim)
                                 label = f"{name} ({sim:.2f})"
-                                _last_event.info(f"✅ Marked: **{name}** • **Teacher** • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
+                                _last_event.info(f"✅ Marked: {name} • Teacher • sim={sim:.2f} • {datetime.now(TZ).strftime('%H:%M:%S')}")
                             else:
                                 label = f"Unknown (best sim {sim:.2f})"
-                        cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        cv2.putText(frame, label, (20,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
                     frame_slot.image(frame, channels="BGR")
                 cap.release()
 
@@ -359,7 +399,6 @@ with tab_records:
 
     st.dataframe(df, use_container_width=True, height=420)
 
-    # Download CSV
     csv_bytes = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         label="📥 Download Filtered CSV",
@@ -368,4 +407,4 @@ with tab_records:
         mime="text/csv",
     )
 
-st.caption("Tip: On cloud deployments, choose 'Browser (WebRTC)' to use the user's webcam in real time. All timestamps are saved in Asia/Kolkata.")
+st.caption("Tip: On cloud deployments choose 'Browser (WebRTC)' to use the user's webcam in real time. Timestamps saved in Asia/Kolkata.")
