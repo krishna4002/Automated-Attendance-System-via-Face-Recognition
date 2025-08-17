@@ -1,8 +1,4 @@
 # app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
-# Timezone-aware (Asia/Kolkata)
-# ✅ Enforces unique attendance: 
-#    - Teachers: once per day
-#    - Students: once per period per day
 
 import os
 import cv2
@@ -322,5 +318,6 @@ elif mode == "📑 View Attendance Logs":
             st.info("No teacher attendance records yet.")
         else:
             st.dataframe(df_teachers)
+
 
 
