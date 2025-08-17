@@ -10,3 +10,4 @@ pillow
 pyttsx3
 streamlit-webrtc
 av
+pytz
