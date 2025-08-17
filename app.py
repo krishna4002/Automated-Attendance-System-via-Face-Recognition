@@ -97,17 +97,23 @@ def mark_student_db(name, period):
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
-    try:
+
+    # ✅ Check if already exists
+    c.execute("""
+        SELECT 1 FROM student_attendance 
+        WHERE name=? AND period=? AND date=?
+    """, (name, period, today))
+    exists = c.fetchone()
+
+    if not exists:  # only insert if not already present
         c.execute("""
             INSERT INTO student_attendance (name, time, period, date) 
             VALUES (?, ?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
         play_audio(f"Attendance marked for {name} in {period}")
-    except sqlite3.IntegrityError:
-        # Already marked → ignore
-        pass
     conn.close()
+
 
 def mark_teacher_db(name):
     """Mark teacher attendance only once per day."""
@@ -115,17 +121,23 @@ def mark_teacher_db(name):
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
-    try:
+
+    # ✅ Check if already exists
+    c.execute("""
+        SELECT 1 FROM teacher_attendance 
+        WHERE name=? AND date=?
+    """, (name, today))
+    exists = c.fetchone()
+
+    if not exists:  # only insert if not already present
         c.execute("""
             INSERT INTO teacher_attendance (name, time, date) 
             VALUES (?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
         play_audio(f"Attendance marked for {name}")
-    except sqlite3.IntegrityError:
-        # Already marked → ignore
-        pass
     conn.close()
+
 
 def fetch_logs(table_name):
     conn = sqlite3.connect(DB_PATH)
@@ -295,3 +307,4 @@ elif mode == "📑 View Attendance Logs":
         st.dataframe(df_teachers)
 
 st.caption("Tip: On cloud deployments, always choose 'Browser (WebRTC)' to use the user's webcam in real time. All times are stored in IST (Asia/Kolkata).")
+
