@@ -1,5 +1,8 @@
 # app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
 # Timezone-aware (Asia/Kolkata)
+# ✅ Enforces unique attendance: 
+#    - Teachers: once per day
+#    - Students: once per period per day
 
 import os
 import cv2
@@ -71,7 +74,8 @@ def init_db():
             name TEXT,
             time TEXT,
             period TEXT,
-            date TEXT
+            date TEXT,
+            UNIQUE(name, period, date)  -- ✅ prevents duplicates
         )
     """)
     # Teachers table
@@ -80,58 +84,48 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             time TEXT,
-            date TEXT
+            date TEXT,
+            UNIQUE(name, date)  -- ✅ prevents duplicates
         )
     """)
     conn.commit()
     conn.close()
 
 def mark_student_db(name, period):
+    """Mark student attendance only once per period per day."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    now = datetime.now(INDIA_TZ)  # ✅ timezone aware
+    now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
-    # prevent duplicate (name+period+date)
-    c.execute("SELECT 1 FROM student_attendance WHERE name=? AND period=? AND date=?",
-              (name, period, today))
-    if not c.fetchone():
-        c.execute("INSERT INTO student_attendance (name, time, period, date) VALUES (?,?,?,?)",
-                  (name, now.strftime("%H:%M:%S"), period, today))
+    try:
+        c.execute("""
+            INSERT INTO student_attendance (name, time, period, date) 
+            VALUES (?, ?, ?, ?)
+        """, (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
-        play_audio(f"Attendance marked for {name}")
+        play_audio(f"Attendance marked for {name} in {period}")
+    except sqlite3.IntegrityError:
+        # Already marked → ignore
+        pass
     conn.close()
 
 def mark_teacher_db(name):
+    """Mark teacher attendance only once per day."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    now = datetime.now(INDIA_TZ)  # ✅ timezone aware
+    now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
-    # prevent duplicate (name+date)
-    c.execute("SELECT 1 FROM teacher_attendance WHERE name=? AND date=?", (name, today))
-    if not c.fetchone():
-        c.execute("INSERT INTO teacher_attendance (name, time, date) VALUES (?,?,?)",
-                  (name, now.strftime("%H:%M:%S"), today))
+    try:
+        c.execute("""
+            INSERT INTO teacher_attendance (name, time, date) 
+            VALUES (?, ?, ?)
+        """, (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
         play_audio(f"Attendance marked for {name}")
+    except sqlite3.IntegrityError:
+        # Already marked → ignore
+        pass
     conn.close()
-
-def load_existing_student_entries():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")   # ✅ timezone aware
-    c.execute("SELECT name, period FROM student_attendance WHERE date=?", (today,))
-    existing = set(c.fetchall())
-    conn.close()
-    return existing
-
-def load_existing_teacher_entries():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")   # ✅ timezone aware
-    c.execute("SELECT name FROM teacher_attendance WHERE date=?", (today,))
-    existing = {row[0] for row in c.fetchall()}
-    conn.close()
-    return existing
 
 def fetch_logs(table_name):
     conn = sqlite3.connect(DB_PATH)
@@ -148,22 +142,20 @@ init_db()
 def get_current_period(schedule: dict):
     if not schedule:
         return None
-    now = datetime.now(INDIA_TZ).time()   # ✅ timezone aware
+    now = datetime.now(INDIA_TZ).time()
     for period_name, (start, end) in schedule.items():
         if start <= now <= end:
             return period_name
     return None
 
 def recognize_face(embedding, embedding_dict, threshold=0.75):
-    if embedding_dict is None or len(embedding_dict) == 0:
+    if not embedding_dict:
         return None
-    best_match = None
-    highest_similarity = 0.0
+    best_match, highest_similarity = None, 0.0
     for name, ref_emb in embedding_dict.items():
         sim = cosine_similarity(embedding, ref_emb.reshape(1, -1))[0][0]
         if sim > threshold and sim > highest_similarity:
-            best_match = name
-            highest_similarity = sim
+            best_match, highest_similarity = name, sim
     return best_match
 
 def parse_schedule_csv(csv_file):
@@ -185,7 +177,7 @@ def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
 
 st.title("🧠 AI-Powered Attendance System (SQLite, IST)")
 mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
-today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")   # ✅ timezone aware
+today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
 
 # =============================
 # SCHEDULE SETTINGS
@@ -267,8 +259,6 @@ class AttendanceProcessor(VideoProcessorBase):
 
 if mode == "Student":
     st.subheader("📚 Student Mode (Real-Time)")
-    existing_attendance = load_existing_student_entries()
-
     if capture_source.startswith("Browser"):
         webrtc_streamer(
             key="student_attendance",
@@ -278,37 +268,9 @@ if mode == "Student":
         )
     else:
         st.warning("Local camera selected. This only works on your own machine (not on cloud).")
-        if st.checkbox("Start Local Webcam"):
-            cap = cv2.VideoCapture(0)
-            stframe = st.empty()
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img_pil = Image.fromarray(rgb)
-                face = mtcnn(img_pil)
-                if face is not None:
-                    face = face.unsqueeze(0).to(device)
-                    with torch.no_grad():
-                        emb = model(face).cpu().numpy()
-                    period = get_current_period(class_schedule)
-                    name = recognize_face(emb, embedding_dict)
-                    if name and period:
-                        mark_student_db(name, period)
-                        label = f"{name} - {period}"
-                    elif name and period is None:
-                        label = f"{name} - Not In Period"
-                    else:
-                        label = "Face Not Recognized"
-                    cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                stframe.image(frame, channels="BGR")
-            cap.release()
 
 elif mode == "Teacher":
     st.subheader("🎓 Teacher Mode (Real-Time)")
-    existing_teachers = load_existing_teacher_entries()
-
     if capture_source.startswith("Browser"):
         webrtc_streamer(
             key="teacher_attendance",
@@ -318,29 +280,6 @@ elif mode == "Teacher":
         )
     else:
         st.warning("Local camera selected. This only works on your own machine (not on cloud).")
-        if st.checkbox("Start Local Webcam"):
-            cap = cv2.VideoCapture(0)
-            stframe = st.empty()
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img_pil = Image.fromarray(rgb)
-                face = mtcnn(img_pil)
-                if face is not None:
-                    face = face.unsqueeze(0).to(device)
-                    with torch.no_grad():
-                        emb = model(face).cpu().numpy()
-                    name = recognize_face(emb, embedding_dict)
-                    if name:
-                        mark_teacher_db(name)
-                        label = name
-                    else:
-                        label = "Face Not Recognized"
-                    cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                stframe.image(frame, channels="BGR")
-            cap.release()
 
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
