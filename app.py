@@ -1,4 +1,5 @@
 # app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
+# Timezone-aware (Asia/Kolkata)
 
 import os
 import cv2
@@ -14,6 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 import platform
 import pyttsx3
+from zoneinfo import ZoneInfo   # ✅ timezone support
 
 # WebRTC
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
@@ -26,6 +28,7 @@ import av
 st.set_page_config(page_title="AI Attendance System", layout="centered")
 
 DB_PATH = "attendance.db"
+INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
 
 def play_audio(text):
     """Non-blocking best-effort voice feedback."""
@@ -86,13 +89,14 @@ def init_db():
 def mark_student_db(name, period):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now(INDIA_TZ)  # ✅ timezone aware
+    today = now.strftime("%Y-%m-%d")
     # prevent duplicate (name+period+date)
     c.execute("SELECT 1 FROM student_attendance WHERE name=? AND period=? AND date=?",
               (name, period, today))
     if not c.fetchone():
         c.execute("INSERT INTO student_attendance (name, time, period, date) VALUES (?,?,?,?)",
-                  (name, datetime.now().strftime("%H:%M:%S"), period, today))
+                  (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
         play_audio(f"Attendance marked for {name}")
     conn.close()
@@ -100,12 +104,13 @@ def mark_student_db(name, period):
 def mark_teacher_db(name):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now(INDIA_TZ)  # ✅ timezone aware
+    today = now.strftime("%Y-%m-%d")
     # prevent duplicate (name+date)
     c.execute("SELECT 1 FROM teacher_attendance WHERE name=? AND date=?", (name, today))
     if not c.fetchone():
         c.execute("INSERT INTO teacher_attendance (name, time, date) VALUES (?,?,?)",
-                  (name, datetime.now().strftime("%H:%M:%S"), today))
+                  (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
         play_audio(f"Attendance marked for {name}")
     conn.close()
@@ -113,7 +118,7 @@ def mark_teacher_db(name):
 def load_existing_student_entries():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")   # ✅ timezone aware
     c.execute("SELECT name, period FROM student_attendance WHERE date=?", (today,))
     existing = set(c.fetchall())
     conn.close()
@@ -122,7 +127,7 @@ def load_existing_student_entries():
 def load_existing_teacher_entries():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")   # ✅ timezone aware
     c.execute("SELECT name FROM teacher_attendance WHERE date=?", (today,))
     existing = {row[0] for row in c.fetchall()}
     conn.close()
@@ -143,7 +148,7 @@ init_db()
 def get_current_period(schedule: dict):
     if not schedule:
         return None
-    now = datetime.now().time()
+    now = datetime.now(INDIA_TZ).time()   # ✅ timezone aware
     for period_name, (start, end) in schedule.items():
         if start <= now <= end:
             return period_name
@@ -178,9 +183,9 @@ def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
 # MODE SELECTION
 # =============================
 
-st.title("🧠 AI-Powered Attendance System (SQLite)")
+st.title("🧠 AI-Powered Attendance System (SQLite, IST)")
 mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
-today = datetime.now().strftime("%Y-%m-%d")
+today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")   # ✅ timezone aware
 
 # =============================
 # SCHEDULE SETTINGS
@@ -350,4 +355,4 @@ elif mode == "📑 View Attendance Logs":
         df_teachers = fetch_logs("teacher_attendance")
         st.dataframe(df_teachers)
 
-st.caption("Tip: On cloud deployments, always choose 'Browser (WebRTC)' to use the user's webcam in real time.")
+st.caption("Tip: On cloud deployments, always choose 'Browser (WebRTC)' to use the user's webcam in real time. All times are stored in IST (Asia/Kolkata).")
