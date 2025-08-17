@@ -296,15 +296,31 @@ elif mode == "Teacher":
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
 
+    # 🚨 Reset DB button
+    if st.button("🗑 Reset Database"):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DROP TABLE IF EXISTS student_attendance")
+        c.execute("DROP TABLE IF EXISTS teacher_attendance")
+        conn.commit()
+        conn.close()
+        init_db()  # recreate fresh tables
+        st.success("✅ Database has been reset!")
+
     tab1, tab2 = st.tabs(["Student Attendance", "Teacher Attendance"])
 
     with tab1:
         df_students = fetch_logs("student_attendance")
-        st.dataframe(df_students)
+        if df_students.empty:
+            st.info("No student attendance records yet.")
+        else:
+            st.dataframe(df_students)
 
     with tab2:
         df_teachers = fetch_logs("teacher_attendance")
-        st.dataframe(df_teachers)
+        if df_teachers.empty:
+            st.info("No teacher attendance records yet.")
+        else:
+            st.dataframe(df_teachers)
 
-st.caption("Tip: On cloud deployments, always choose 'Browser (WebRTC)' to use the user's webcam in real time. All times are stored in IST (Asia/Kolkata).")
 
