@@ -128,6 +128,12 @@ def load_existing_teacher_entries():
     conn.close()
     return existing
 
+def fetch_logs(table_name):
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query(f"SELECT * FROM {table_name} ORDER BY date DESC, time DESC", conn)
+    conn.close()
+    return df
+
 init_db()
 
 # =============================
@@ -169,39 +175,44 @@ def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
     cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
 # =============================
-# SIDEBAR & SCHEDULE
+# MODE SELECTION
 # =============================
 
 st.title("🧠 AI-Powered Attendance System (SQLite)")
-mode = st.sidebar.radio("Choose Role", ["Student", "Teacher"])
+mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
 today = datetime.now().strftime("%Y-%m-%d")
 
-st.sidebar.subheader("🗂 Schedule Input Method")
-schedule_option = st.sidebar.radio("How would you like to input class periods?", ["Manual", "Upload CSV"])
-class_schedule = {}
+# =============================
+# SCHEDULE SETTINGS
+# =============================
 
-if schedule_option == "Manual":
-    st.sidebar.subheader("🕒 Class Period Configuration")
-    num_periods = st.sidebar.number_input("Number of Periods", min_value=1, max_value=10, value=3)
-    for i in range(num_periods):
-        with st.sidebar.expander(f"📘 Period {i+1} Settings"):
-            subject = st.text_input(f"Subject Name {i+1}", key=f"sub_{i}")
-            start = st.time_input(f"Start Time {i+1}", key=f"start_{i}", value=time(9+(i*1), 0))
-            end = st.time_input(f"End Time {i+1}", key=f"end_{i}", value=time(10+(i*1), 0))
-            if subject:
-                class_schedule[f"Period {i+1} - {subject}"] = (start, end)
-elif schedule_option == "Upload CSV":
-    st.sidebar.subheader("📁 Upload CSV with Columns: Subject,Start,End (HH:MM)")
-    csv_file = st.sidebar.file_uploader("Upload CSV File", type=['csv'])
-    if csv_file is not None:
-        try:
-            class_schedule = parse_schedule_csv(csv_file)
-            st.sidebar.success("✅ Schedule Loaded from CSV")
-        except Exception as e:
-            st.sidebar.error(f"Failed to parse CSV: {e}")
+if mode in ["Student", "Teacher"]:
+    st.sidebar.subheader("🗂 Schedule Input Method")
+    schedule_option = st.sidebar.radio("How would you like to input class periods?", ["Manual", "Upload CSV"])
+    class_schedule = {}
 
-st.sidebar.markdown("---")
-capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
+    if schedule_option == "Manual":
+        st.sidebar.subheader("🕒 Class Period Configuration")
+        num_periods = st.sidebar.number_input("Number of Periods", min_value=1, max_value=10, value=3)
+        for i in range(num_periods):
+            with st.sidebar.expander(f"📘 Period {i+1} Settings"):
+                subject = st.text_input(f"Subject Name {i+1}", key=f"sub_{i}")
+                start = st.time_input(f"Start Time {i+1}", key=f"start_{i}", value=time(9+(i*1), 0))
+                end = st.time_input(f"End Time {i+1}", key=f"end_{i}", value=time(10+(i*1), 0))
+                if subject:
+                    class_schedule[f"Period {i+1} - {subject}"] = (start, end)
+    elif schedule_option == "Upload CSV":
+        st.sidebar.subheader("📁 Upload CSV with Columns: Subject,Start,End (HH:MM)")
+        csv_file = st.sidebar.file_uploader("Upload CSV File", type=['csv'])
+        if csv_file is not None:
+            try:
+                class_schedule = parse_schedule_csv(csv_file)
+                st.sidebar.success("✅ Schedule Loaded from CSV")
+            except Exception as e:
+                st.sidebar.error(f"Failed to parse CSV: {e}")
+
+    st.sidebar.markdown("---")
+    capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
 
 # =============================
 # WEBRTC PROCESSOR
@@ -325,5 +336,18 @@ elif mode == "Teacher":
                     cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
                 stframe.image(frame, channels="BGR")
             cap.release()
+
+elif mode == "📑 View Attendance Logs":
+    st.subheader("📑 Attendance Logs")
+
+    tab1, tab2 = st.tabs(["Student Attendance", "Teacher Attendance"])
+
+    with tab1:
+        df_students = fetch_logs("student_attendance")
+        st.dataframe(df_students)
+
+    with tab2:
+        df_teachers = fetch_logs("teacher_attendance")
+        st.dataframe(df_teachers)
 
 st.caption("Tip: On cloud deployments, always choose 'Browser (WebRTC)' to use the user's webcam in real time.")
