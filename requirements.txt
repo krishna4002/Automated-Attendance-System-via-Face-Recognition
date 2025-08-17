@@ -1,7 +1,8 @@
 streamlit 
-opencv-python 
+#opencv-python 
 numpy
 scikit-learn
 keras-facenet
 facenet-pytorch
 pyttsx3
+opencv-python-headless
