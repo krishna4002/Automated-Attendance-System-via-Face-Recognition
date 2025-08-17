@@ -1,132 +1,169 @@
-import streamlit as st
+import os
 import cv2
 import numpy as np
-import face_recognition
+import streamlit as st
+import pandas as pd
 import sqlite3
-from datetime import datetime
+from datetime import datetime, time
+from PIL import Image
+import torch
 import pytz
-import os
+from facenet_pytorch import MTCNN, InceptionResnetV1
+from sklearn.metrics.pairwise import cosine_similarity
 
-# =========================
-# Database Setup
-# =========================
-def init_db():
-    conn = sqlite3.connect("attendance.db")
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS attendance
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT,
-                  date TEXT,
-                  time TEXT)''')
-    conn.commit()
-    conn.close()
+# =============================
+# CONFIGURATION
+# =============================
+st.set_page_config(page_title="AI Attendance System", layout="wide")
+tz = pytz.timezone("Asia/Kolkata")
 
-def mark_attendance(name):
-    conn = sqlite3.connect("attendance.db")
-    c = conn.cursor()
+# Database setup
+DB_PATH = "attendance.db"
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS attendance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT,
+    name TEXT,
+    period TEXT,
+    date TEXT,
+    time TEXT
+)
+""")
+conn.commit()
 
-    # Timezone Asia/Kolkata
-    tz = pytz.timezone("Asia/Kolkata")
+# Load model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+mtcnn = MTCNN(image_size=160, margin=20, min_face_size=40, device=device)
+model = InceptionResnetV1(pretrained="vggface2").eval().to(device)
+
+# Load embeddings
+embedding_dict = np.load("embeddings.npy", allow_pickle=True).item()
+
+# =============================
+# FUNCTIONS
+# =============================
+def get_current_period(schedule):
+    now = datetime.now(tz).time()
+    for period_name, (start, end) in schedule.items():
+        if start <= now <= end:
+            return period_name
+    return None
+
+def recognize_face(embedding):
+    best_match, highest_similarity = None, 0.0
+    for name, ref_emb in embedding_dict.items():
+        sim = cosine_similarity(embedding, ref_emb.reshape(1, -1))[0][0]
+        if sim > 0.75 and sim > highest_similarity:
+            best_match, highest_similarity = name, sim
+    return best_match
+
+def mark_attendance(role, name, period=None):
     now = datetime.now(tz)
-    date = now.strftime("%Y-%m-%d")
-    time = now.strftime("%H:%M:%S")
+    date_str, time_str = now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")
 
-    c.execute("INSERT INTO attendance (name, date, time) VALUES (?, ?, ?)", (name, date, time))
-    conn.commit()
-    conn.close()
-
-# =========================
-# Load Face Embeddings
-# =========================
-if os.path.exists("embeddings.npy"):
-    data = np.load("embeddings.npy", allow_pickle=True).item()
-    known_encodings, known_names = data["encodings"], data["names"]
-else:
-    known_encodings, known_names = [], []
-
-# =========================
-# Streamlit UI
-# =========================
-st.set_page_config(page_title="Face Recognition Attendance", layout="wide")
-st.title("📸 Automated Attendance System via Face Recognition")
-
-# Initialize DB
-init_db()
-
-# Tabs for navigation
-tabs = st.tabs(["🎥 Live Recognition", "📊 Attendance Records"])
-
-# =========================
-# Tab 1: Live Recognition
-# =========================
-with tabs[0]:
-    st.subheader("Start Camera for Attendance")
-
-    start = st.button("▶ Start Camera")
-    stop = st.button("⏹ Stop Camera")
-
-    frame_placeholder = st.empty()
-    status = st.empty()
-
-    if "run" not in st.session_state:
-        st.session_state.run = False
-
-    if start:
-        st.session_state.run = True
-    if stop:
-        st.session_state.run = False
-
-    camera = cv2.VideoCapture(0)
-
-    while st.session_state.run:
-        ret, frame = camera.read()
-        if not ret:
-            status.error("⚠ Could not access camera")
-            break
-
-        # Resize for faster processing
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-
-        # Detect faces
-        face_locations = face_recognition.face_locations(rgb_small_frame)
-        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
-
-        for face_encoding, face_location in zip(face_encodings, face_locations):
-            matches = face_recognition.compare_faces(known_encodings, face_encoding)
-            name = "Unknown"
-
-            if True in matches:
-                match_index = matches.index(True)
-                name = known_names[match_index]
-                mark_attendance(name)
-
-            # Draw rectangle + name
-            top, right, bottom, left = [v * 4 for v in face_location]  # scale back
-            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.9, (0, 255, 0), 2)
-
-        # Show in Streamlit
-        frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-
-    camera.release()
-
-# =========================
-# Tab 2: Attendance Records
-# =========================
-with tabs[1]:
-    st.subheader("Attendance Records (SQLite Database)")
-
-    conn = sqlite3.connect("attendance.db")
-    c = conn.cursor()
-    c.execute("SELECT * FROM attendance ORDER BY id DESC")
-    rows = c.fetchall()
-    conn.close()
-
-    if rows:
-        import pandas as pd
-        df = pd.DataFrame(rows, columns=["ID", "Name", "Date", "Time"])
-        st.dataframe(df, use_container_width=True)
+    if role == "Student":
+        cursor.execute("SELECT * FROM attendance WHERE name=? AND date=? AND period=?", (name, date_str, period))
     else:
-        st.info("No attendance records found yet.")
+        cursor.execute("SELECT * FROM attendance WHERE name=? AND date=? AND role=?", (name, date_str, role))
+
+    if cursor.fetchone() is None:
+        cursor.execute("INSERT INTO attendance (role, name, period, date, time) VALUES (?, ?, ?, ?, ?)",
+                       (role, name, period if period else "", date_str, time_str))
+        conn.commit()
+        st.success(f"✅ Attendance marked for {name}")
+
+def parse_schedule_csv(csv_file):
+    df = pd.read_csv(csv_file)
+    schedule = {}
+    for _, row in df.iterrows():
+        name = row["Subject"]
+        start = datetime.strptime(row["Start"], "%H:%M").time()
+        end = datetime.strptime(row["End"], "%H:%M").time()
+        schedule[name] = (start, end)
+    return schedule
+
+def view_attendance():
+    df = pd.read_sql("SELECT role, name, period, date, time FROM attendance ORDER BY date DESC, time DESC", conn)
+    st.dataframe(df)
+    st.download_button("📥 Download CSV", df.to_csv(index=False), "attendance.csv")
+
+# =============================
+# STREAMLIT UI
+# =============================
+st.title("🧠 AI-Powered Attendance System (Cloud Version)")
+
+menu = ["Student Mode", "Teacher Mode", "View Attendance"]
+choice = st.sidebar.selectbox("Menu", menu)
+
+# Schedule setup
+class_schedule = {}
+if choice == "Student Mode":
+    st.sidebar.subheader("🗂 Schedule Input")
+    schedule_option = st.sidebar.radio("Schedule input method:", ["Manual", "Upload CSV"])
+
+    if schedule_option == "Manual":
+        num_periods = st.sidebar.number_input("Number of Periods", min_value=1, max_value=10, value=3)
+        for i in range(num_periods):
+            with st.sidebar.expander(f"📘 Period {i+1} Settings"):
+                subject = st.text_input(f"Subject Name {i+1}", key=f"sub_{i}")
+                start = st.time_input(f"Start Time {i+1}", key=f"start_{i}")
+                end = st.time_input(f"End Time {i+1}", key=f"end_{i}")
+                if subject:
+                    class_schedule[f"Period {i+1} - {subject}"] = (start, end)
+
+    elif schedule_option == "Upload CSV":
+        st.sidebar.subheader("📁 Upload CSV (Subject,Start,End)")
+        csv_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+        if csv_file is not None:
+            class_schedule = parse_schedule_csv(csv_file)
+            st.sidebar.success("✅ Schedule Loaded")
+
+# =============================
+# Student Mode
+# =============================
+if choice == "Student Mode":
+    st.subheader("📚 Student Attendance")
+    uploaded_img = st.camera_input("Take a photo to mark attendance")
+    if uploaded_img:
+        img = Image.open(uploaded_img)
+        face = mtcnn(img)
+        if face is not None:
+            face = face.unsqueeze(0).to(device)
+            with torch.no_grad():
+                emb = model(face).cpu().numpy()
+            name = recognize_face(emb)
+            period = get_current_period(class_schedule)
+            if name and period:
+                mark_attendance("Student", name, period)
+            elif name:
+                st.warning(f"{name} detected, but not in any active class period.")
+            else:
+                st.error("Face not recognized.")
+
+# =============================
+# Teacher Mode
+# =============================
+elif choice == "Teacher Mode":
+    st.subheader("🎓 Teacher Attendance")
+    uploaded_img = st.camera_input("Take a photo to mark teacher attendance")
+    if uploaded_img:
+        img = Image.open(uploaded_img)
+        face = mtcnn(img)
+        if face is not None:
+            face = face.unsqueeze(0).to(device)
+            with torch.no_grad():
+                emb = model(face).cpu().numpy()
+            name = recognize_face(emb)
+            if name:
+                mark_attendance("Teacher", name)
+            else:
+                st.error("Face not recognized.")
+
+# =============================
+# View Attendance
+# =============================
+elif choice == "View Attendance":
+    st.subheader("📋 Attendance Records")
+    view_attendance()
