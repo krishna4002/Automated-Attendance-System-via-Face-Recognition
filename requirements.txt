@@ -1,8 +1,12 @@
-streamlit 
-#opencv-python 
+streamlit
+opencv-python
 numpy
-scikit-learn
-keras-facenet
+torch
+torchvision
 facenet-pytorch
+scikit-learn
+pandas
+pillow
 pyttsx3
-opencv-python-headless
+streamlit-webrtc
+av
