@@ -31,6 +31,10 @@ This system is designed to eliminate the manual and error-prone process of recor
 
 ---
 
+##  Live Demo                                       
+
+👉 **Try the app here:** [Attendance System](https://automated-attendance-system.streamlit.app/)
+
 ## Project Structure
 
 ```
