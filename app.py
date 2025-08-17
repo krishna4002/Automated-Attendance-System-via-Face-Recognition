@@ -183,7 +183,7 @@ def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
 # MODE SELECTION
 # =============================
 
-st.title("🧠 AI-Powered Attendance System (SQLite, IST)")
+st.title("🧠 AI-Powered Attendance System")
 mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
 today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
 
@@ -318,6 +318,7 @@ elif mode == "📑 View Attendance Logs":
             st.info("No teacher attendance records yet.")
         else:
             st.dataframe(df_teachers)
+
 
 
 
