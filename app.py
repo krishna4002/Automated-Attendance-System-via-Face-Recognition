@@ -1,7 +1,30 @@
 # app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
 
+import subprocess
+import sys
 import os
-import cv2
+
+# =============================
+# Auto-install libGL if missing (for OpenCV)
+# =============================
+try:
+    import cv2
+except ImportError:
+    raise
+except OSError as e:
+    if "libGL.so.1" in str(e):
+        print("[INFO] libGL.so.1 missing. Installing...")
+        subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+        subprocess.call(["sudo", "apt-get", "update"])
+        subprocess.call(["sudo", "apt-get", "install", "-y", "libgl1", "libglib2.0-0"])
+        print("[INFO] libGL installed. Please restart the app.")
+        sys.exit(1)
+    else:
+        raise
+
+# =============================
+# OTHER IMPORTS
+# =============================
 import numpy as np
 import streamlit as st
 import pickle
@@ -12,8 +35,7 @@ import torch
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
-import platform
-from zoneinfo import ZoneInfo   # ✅ timezone support
+from zoneinfo import ZoneInfo
 
 # WebRTC
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
@@ -22,12 +44,11 @@ import av
 # =============================
 # CONFIGURATION / MODELS
 # =============================
-
 st.set_page_config(page_title="AI Attendance System", layout="centered")
 
 DB_PATH = "attendance.db"
-INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
-CONFIRM_SOUND = "ding.mp3"  # small mp3 file in project folder
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
+CONFIRM_SOUND = "ding.mp3"  # Place a small mp3 file here
 
 @st.cache_resource(show_spinner=False)
 def load_models_and_embeddings():
@@ -47,7 +68,6 @@ device, mtcnn, model, embedding_dict = load_models_and_embeddings()
 # =============================
 # DATABASE FUNCTIONS
 # =============================
-
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -59,7 +79,7 @@ def init_db():
             time TEXT,
             period TEXT,
             date TEXT,
-            UNIQUE(name, period, date)  -- ✅ prevents duplicates
+            UNIQUE(name, period, date)
         )
     """)
     # Teachers table
@@ -69,63 +89,56 @@ def init_db():
             name TEXT,
             time TEXT,
             date TEXT,
-            UNIQUE(name, date)  -- ✅ prevents duplicates
+            UNIQUE(name, date)
         )
     """)
     conn.commit()
     conn.close()
 
 def mark_student_db(name, period):
-    """Mark student attendance only once per period per day."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
 
-    # ✅ Check if already exists
     c.execute("""
         SELECT 1 FROM student_attendance 
         WHERE name=? AND period=? AND date=?
     """, (name, period, today))
     exists = c.fetchone()
 
-    if not exists:  # only insert if not already present
+    if not exists:
         c.execute("""
             INSERT INTO student_attendance (name, time, period, date) 
             VALUES (?, ?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
-        # ✅ Browser-side confirmation sound
+        # Browser-side confirmation sound
         if os.path.exists(CONFIRM_SOUND):
             st.audio(CONFIRM_SOUND)
     conn.close()
 
-
 def mark_teacher_db(name):
-    """Mark teacher attendance only once per day."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
 
-    # ✅ Check if already exists
     c.execute("""
         SELECT 1 FROM teacher_attendance 
         WHERE name=? AND date=?
     """, (name, today))
     exists = c.fetchone()
 
-    if not exists:  # only insert if not already present
+    if not exists:
         c.execute("""
             INSERT INTO teacher_attendance (name, time, date) 
             VALUES (?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
-        # ✅ Browser-side confirmation sound
         if os.path.exists(CONFIRM_SOUND):
             st.audio(CONFIRM_SOUND)
     conn.close()
-
 
 def fetch_logs(table_name):
     conn = sqlite3.connect(DB_PATH)
@@ -138,7 +151,6 @@ init_db()
 # =============================
 # UTILITY FUNCTIONS
 # =============================
-
 def get_current_period(schedule: dict):
     if not schedule:
         return None
@@ -174,7 +186,6 @@ def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
 # =============================
 # MODE SELECTION
 # =============================
-
 st.title("🧠 AI-Powered Attendance System")
 mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
 today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
@@ -182,7 +193,6 @@ today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
 # =============================
 # SCHEDULE SETTINGS
 # =============================
-
 if mode in ["Student", "Teacher"]:
     st.sidebar.subheader("🗂 Schedule Input Method")
     schedule_option = st.sidebar.radio("How would you like to input class periods?", ["Manual", "Upload CSV"])
@@ -214,7 +224,6 @@ if mode in ["Student", "Teacher"]:
 # =============================
 # WEBRTC PROCESSOR
 # =============================
-
 class AttendanceProcessor(VideoProcessorBase):
     def __init__(self, role, class_schedule):
         self.role = role
@@ -256,7 +265,6 @@ class AttendanceProcessor(VideoProcessorBase):
 # =============================
 # MODES
 # =============================
-
 if mode == "Student":
     st.subheader("📚 Student Mode (Real-Time)")
     if capture_source.startswith("Browser"):
@@ -284,7 +292,6 @@ elif mode == "Teacher":
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
 
-    # 🚨 Reset DB button
     if st.button("🗑 Reset Database"):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -292,7 +299,7 @@ elif mode == "📑 View Attendance Logs":
         c.execute("DROP TABLE IF EXISTS teacher_attendance")
         conn.commit()
         conn.close()
-        init_db()  # recreate fresh tables
+        init_db()
         st.success("✅ Database has been reset!")
 
     tab1, tab2 = st.tabs(["Student Attendance", "Teacher Attendance"])
