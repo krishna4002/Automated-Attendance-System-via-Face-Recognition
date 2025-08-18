@@ -1,5 +1,5 @@
 # app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
-# Browser-side TTS confirmation using Web Speech API (SpeechSynthesis).
+# Server-side TTS confirmation using gTTS (plays via st.audio).
 
 import os
 import cv2
@@ -14,6 +14,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 import platform
 from zoneinfo import ZoneInfo   # ✅ timezone support
+from gtts import gTTS
+import tempfile
 
 # WebRTC
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
@@ -44,6 +46,7 @@ INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
 # pillow
 # scikit-learn
 # av
+# gTTS
 # (adapt versions to your environment)
 
 # ---------------------------
@@ -194,6 +197,16 @@ def parse_schedule_csv(csv_file):
 def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
     cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
+def speak_text(text):
+    try:
+        tts = gTTS(text=text, lang="en")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+            tts.save(tmp_file.name)
+            return tmp_file.name
+    except Exception as e:
+        st.error(f"❌ TTS Error: {e}")
+        return None
+
 # ---------------------------
 # UI / Mode Selection
 # ---------------------------
@@ -256,7 +269,6 @@ class AttendanceProcessor(VideoProcessorBase):
                 period = get_current_period(self.class_schedule)
                 if name and period:
                     was_inserted, message = mark_student_db(name, period)
-                    # If newly inserted, set session_state tts_text to trigger browser TTS
                     if was_inserted:
                         try:
                             st.session_state['tts_text'] = message
@@ -341,47 +353,12 @@ elif mode == "📑 View Attendance Logs":
             st.dataframe(df_teachers)
 
 # ---------------------------
-# Browser-side TTS trigger
+# Server-side TTS trigger (gTTS)
 # ---------------------------
-# If the processor set st.session_state['tts_text'], play it in the browser using Web Speech API.
 if "tts_text" in st.session_state and st.session_state.get("tts_text"):
-    # Pop so it's spoken once
     tts_text = st.session_state.pop("tts_text")
+    st.write(f"🔊 Speaking: {tts_text}")
 
-    # Escape for JS
-    safe_text = (
-        tts_text.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace('"', '\\"')
-        .replace("\n", " ")
-    )
-
-    # 👇 Debug/confirmation line you asked for
-    st.write(f"🔊 Speaking: {safe_text}")
-
-    js = f"""
-    <script>
-    const msg = "{safe_text}";
-    if ('speechSynthesis' in window) {{
-        const utter = new SpeechSynthesisUtterance(msg);
-        // Optional tuning
-        utter.rate = 1.0;   // speed (0.1–10)
-        utter.pitch = 1.0;  // voice pitch (0–2)
-        utter.volume = 1.0; // 0–1
-        // Stop any ongoing speech then speak
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utter);
-    }} else {{
-        console.log("SpeechSynthesis not supported");
-    }}
-    </script>
-    """
-
-    st.components.v1.html(js, height=0)
-
-
-# ---------------------------
-# Small usage hint
-# ---------------------------
-#st.sidebar.markdown("---")
-#st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
+    audio_file = speak_text(tts_text)
+    if audio_file:
+        st.audio(audio_file, format="audio/mp3", autoplay=True)
