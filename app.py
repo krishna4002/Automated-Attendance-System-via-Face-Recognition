@@ -290,7 +290,7 @@ class AttendanceProcessor(VideoProcessorBase):
 # ---------------------------
 # Modes: Student / Teacher / Logs
 # ---------------------------
-if self.role == "Student":
+if mode == "Student":
     period = get_current_period(self.class_schedule)
     if name and period:
         was_inserted, message = mark_student_db(name, period)
@@ -302,7 +302,7 @@ if self.role == "Student":
     else:
         draw_label(img, "Face Not Recognized", color=(0, 0, 255))
 
-elif self.role == "Teacher":
+elif mode == "Teacher":
     if name:
         was_inserted, message = mark_teacher_db(name)
         if was_inserted:
@@ -381,6 +381,7 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
 # ---------------------------
 #st.sidebar.markdown("---")
 #st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
+
 
 
 
