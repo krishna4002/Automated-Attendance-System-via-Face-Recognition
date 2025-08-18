@@ -11,3 +11,4 @@ pyttsx3
 streamlit-webrtc
 av
 pytz
+gTTS
