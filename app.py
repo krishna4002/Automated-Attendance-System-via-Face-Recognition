@@ -13,7 +13,6 @@ from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 import platform
-import pyttsx3
 from zoneinfo import ZoneInfo   # ✅ timezone support
 
 # WebRTC
@@ -28,18 +27,7 @@ st.set_page_config(page_title="AI Attendance System", layout="centered")
 
 DB_PATH = "attendance.db"
 INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
-
-def play_audio(text):
-    """Non-blocking best-effort voice feedback."""
-    try:
-        if platform.system() == "Windows":
-            engine = pyttsx3.init()
-            engine.say(text)
-            engine.runAndWait()
-        else:
-            os.system(f"say '{text}' 2>/dev/null || true")
-    except Exception as e:
-        print(f"[VOICE ERROR] {e}")
+CONFIRM_SOUND = "ding.mp3"  # small mp3 file in project folder
 
 @st.cache_resource(show_spinner=False)
 def load_models_and_embeddings():
@@ -107,7 +95,9 @@ def mark_student_db(name, period):
             VALUES (?, ?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
-        play_audio(f"Attendance marked for {name} in {period}")
+        # ✅ Browser-side confirmation sound
+        if os.path.exists(CONFIRM_SOUND):
+            st.audio(CONFIRM_SOUND)
     conn.close()
 
 
@@ -131,7 +121,9 @@ def mark_teacher_db(name):
             VALUES (?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
-        play_audio(f"Attendance marked for {name}")
+        # ✅ Browser-side confirmation sound
+        if os.path.exists(CONFIRM_SOUND):
+            st.audio(CONFIRM_SOUND)
     conn.close()
 
 
@@ -318,7 +310,3 @@ elif mode == "📑 View Attendance Logs":
             st.info("No teacher attendance records yet.")
         else:
             st.dataframe(df_teachers)
-
-
-
-
