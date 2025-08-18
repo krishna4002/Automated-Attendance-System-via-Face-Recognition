@@ -229,8 +229,8 @@ if mode in ["Student", "Teacher"]:
             except Exception as e:
                 st.sidebar.error(f"Failed to parse CSV: {e}")
 
-    #st.sidebar.markdown("---")
-    #capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
+    st.sidebar.markdown("---")
+    capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
 
 # ---------------------------
 # WEBRTC VIDEO PROCESSOR
@@ -382,3 +382,4 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
 # ---------------------------
 #st.sidebar.markdown("---")
 #st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
+
