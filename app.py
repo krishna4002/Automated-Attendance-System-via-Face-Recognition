@@ -290,29 +290,26 @@ class AttendanceProcessor(VideoProcessorBase):
 # ---------------------------
 # Modes: Student / Teacher / Logs
 # ---------------------------
-if mode == "Student":
-    st.subheader("📚 Student Mode (Real-Time)")
-    if capture_source.startswith("Browser"):
-        webrtc_streamer(
-            key="student_attendance",
-            mode=WebRtcMode.SENDRECV,
-            media_stream_constraints={"video": True, "audio": False},
-            video_processor_factory=lambda: AttendanceProcessor("Student", class_schedule),
-        )
+if self.role == "Student":
+    period = get_current_period(self.class_schedule)
+    if name and period:
+        was_inserted, message = mark_student_db(name, period)
+        if was_inserted:
+            st.session_state['tts_text'] = message   # ✅ no rerun here
+        draw_label(img, f"{name} - {period}", color=(0, 200, 0))
+    elif name and period is None:
+        draw_label(img, f"{name} - Not In Period", color=(0, 165, 255))
     else:
-        st.warning("Local camera selected. This only works on your own machine (not on cloud).")
+        draw_label(img, "Face Not Recognized", color=(0, 0, 255))
 
-elif mode == "Teacher":
-    st.subheader("🎓 Teacher Mode (Real-Time)")
-    if capture_source.startswith("Browser"):
-        webrtc_streamer(
-            key="teacher_attendance",
-            mode=WebRtcMode.SENDRECV,
-            media_stream_constraints={"video": True, "audio": False},
-            video_processor_factory=lambda: AttendanceProcessor("Teacher", class_schedule),
-        )
+elif self.role == "Teacher":
+    if name:
+        was_inserted, message = mark_teacher_db(name)
+        if was_inserted:
+            st.session_state['tts_text'] = message   # ✅ no rerun here
+        draw_label(img, name, color=(255, 0, 0))
     else:
-        st.warning("Local camera selected. This only works on your own machine (not on cloud).")
+        draw_label(img, "Face Not Recognized", color=(0, 0, 255))
 
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
@@ -384,5 +381,6 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
 # ---------------------------
 #st.sidebar.markdown("---")
 #st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
+
 
 
