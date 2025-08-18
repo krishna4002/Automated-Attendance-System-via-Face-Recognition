@@ -259,10 +259,9 @@ class AttendanceProcessor(VideoProcessorBase):
                     # If newly inserted, set session_state tts_text to trigger browser TTS
                     if was_inserted:
                         try:
-                            # set a session_state flag for main thread to pick up
                             st.session_state['tts_text'] = message
+                            st.experimental_rerun()   # 🔥 ensure main thread runs JS
                         except Exception:
-                            # It's possible modifying session_state from this thread may fail silently
                             pass
                     draw_label(img, f"{name} - {period}", color=(0, 200, 0))
                 elif name and period is None:
@@ -276,6 +275,7 @@ class AttendanceProcessor(VideoProcessorBase):
                     if was_inserted:
                         try:
                             st.session_state['tts_text'] = message
+                            st.experimental_rerun()   # 🔥 ensure main thread runs JS
                         except Exception:
                             pass
                     draw_label(img, name, color=(255, 0, 0))
@@ -285,6 +285,7 @@ class AttendanceProcessor(VideoProcessorBase):
             draw_label(img, "No face detected", color=(0, 0, 255))
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
+
 
 # ---------------------------
 # Modes: Student / Teacher / Logs
@@ -345,38 +346,43 @@ elif mode == "📑 View Attendance Logs":
 # Browser-side TTS trigger
 # ---------------------------
 # If the processor set st.session_state['tts_text'], play it in the browser using Web Speech API.
-if 'tts_text' in st.session_state and st.session_state.get('tts_text'):
-    # Pop the text so we only play once
-    tts_text = st.session_state.pop('tts_text')
+if "tts_text" in st.session_state and st.session_state.get("tts_text"):
+    # Pop so it's spoken once
+    tts_text = st.session_state.pop("tts_text")
 
-    # Escape the text for JavaScript (basic)
-    safe_text = tts_text.replace("'", "\\'").replace("\n", " ")
+    # Escape for JS
+    safe_text = (
+        tts_text.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace('"', '\\"')
+        .replace("\n", " ")
+    )
 
-    # Insert an invisible HTML block that runs JS to speak the message immediately.
-    # This uses the browser's SpeechSynthesis API (no external calls).
     js = f"""
     <script>
-    const msg = '{safe_text}';
+    const msg = "{safe_text}";
     if ('speechSynthesis' in window) {{
         const utter = new SpeechSynthesisUtterance(msg);
-        // optional: choose voice, pitch, rate
-        utter.rate = 1.0;
-        utter.pitch = 1.0;
-        // Some browsers require a user gesture before audio; but often works on streamlit interactions.
-        window.speechSynthesis.cancel(); // stop any ongoing speech
+        // Optional tuning
+        utter.rate = 1.0;   // speed (0.1–10)
+        utter.pitch = 1.0;  // voice pitch (0–2)
+        utter.volume = 1.0; // 0–1
+        // Stop any ongoing speech then speak
+        window.speechSynthesis.cancel();
         window.speechSynthesis.speak(utter);
     }} else {{
-        console.log('SpeechSynthesis not supported in this browser');
+        console.log("SpeechSynthesis not supported");
     }}
     </script>
     """
 
-    # We use unsafe_allow_html to run script; streamlit will render the script and play audio.
     st.components.v1.html(js, height=0)
+
 
 # ---------------------------
 # Small usage hint
 # ---------------------------
 #st.sidebar.markdown("---")
 #st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
+
 
