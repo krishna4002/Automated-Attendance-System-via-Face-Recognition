@@ -1,33 +1,10 @@
 # app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
+# Browser-side TTS confirmation using Web Speech API (SpeechSynthesis).
 
-import subprocess
-import sys
 import os
-
-# =============================
-# Auto-install libGL if missing (for OpenCV)
-# =============================
-try:
-    import cv2
-except ImportError:
-    raise
-except OSError as e:
-    if "libGL.so.1" in str(e):
-        print("[INFO] libGL.so.1 missing. Installing...")
-        subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-        subprocess.call(["sudo", "apt-get", "update"])
-        subprocess.call(["sudo", "apt-get", "install", "-y", "libgl1", "libglib2.0-0"])
-        print("[INFO] libGL installed. Please restart the app.")
-        sys.exit(1)
-    else:
-        raise
-
-# =============================
-# OTHER IMPORTS
-# =============================
+import cv2
 import numpy as np
 import streamlit as st
-import pickle
 import sqlite3
 from datetime import datetime, time
 from PIL import Image
@@ -35,21 +12,43 @@ import torch
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
-from zoneinfo import ZoneInfo
+import platform
+from zoneinfo import ZoneInfo   # ✅ timezone support
 
 # WebRTC
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import av
 
-# =============================
-# CONFIGURATION / MODELS
-# =============================
+# ---------------------------
+# Page config
+# ---------------------------
 st.set_page_config(page_title="AI Attendance System", layout="centered")
 
+# ---------------------------
+# Constants / DB / TZ
+# ---------------------------
 DB_PATH = "attendance.db"
-INDIA_TZ = ZoneInfo("Asia/Kolkata")
-CONFIRM_SOUND = "ding.mp3"  # Place a small mp3 file here
+INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
 
+# ---------------------------
+# Helpful comment about requirements (add to requirements.txt)
+# ---------------------------
+# requirements.txt should include at least:
+# streamlit
+# streamlit-webrtc
+# facenet-pytorch
+# torch
+# torchvision
+# numpy
+# pandas
+# pillow
+# scikit-learn
+# av
+# (adapt versions to your environment)
+
+# ---------------------------
+# MODEL + EMBEDDINGS LOADER
+# ---------------------------
 @st.cache_resource(show_spinner=False)
 def load_models_and_embeddings():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -57,7 +56,8 @@ def load_models_and_embeddings():
     model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
     if not os.path.exists('embeddings.npy'):
-        st.error("`embeddings.npy` not found. Please generate embeddings before running the app.")
+        # Don't crash—return empty dict so app still runs and shows message
+        st.error("`embeddings.npy` not found. Please upload/generate embeddings.npy in the app folder.")
         return device, mtcnn, model, {}
 
     embedding_dict = np.load('embeddings.npy', allow_pickle=True).item()
@@ -65,9 +65,9 @@ def load_models_and_embeddings():
 
 device, mtcnn, model, embedding_dict = load_models_and_embeddings()
 
-# =============================
+# ---------------------------
 # DATABASE FUNCTIONS
-# =============================
+# ---------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -96,6 +96,10 @@ def init_db():
     conn.close()
 
 def mark_student_db(name, period):
+    """
+    Mark student attendance only once per period per day.
+    Returns (was_inserted: bool, message: str)
+    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
@@ -113,12 +117,17 @@ def mark_student_db(name, period):
             VALUES (?, ?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
-        # Browser-side confirmation sound
-        if os.path.exists(CONFIRM_SOUND):
-            st.audio(CONFIRM_SOUND)
+        conn.close()
+        message = f"Attendance marked for {name} in {period}"
+        return True, message
     conn.close()
+    return False, ""
 
 def mark_teacher_db(name):
+    """
+    Mark teacher attendance only once per day.
+    Returns (was_inserted: bool, message: str)
+    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
@@ -136,9 +145,11 @@ def mark_teacher_db(name):
             VALUES (?, ?, ?)
         """, (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
-        if os.path.exists(CONFIRM_SOUND):
-            st.audio(CONFIRM_SOUND)
+        conn.close()
+        message = f"Attendance marked for {name}"
+        return True, message
     conn.close()
+    return False, ""
 
 def fetch_logs(table_name):
     conn = sqlite3.connect(DB_PATH)
@@ -148,9 +159,9 @@ def fetch_logs(table_name):
 
 init_db()
 
-# =============================
+# ---------------------------
 # UTILITY FUNCTIONS
-# =============================
+# ---------------------------
 def get_current_period(schedule: dict):
     if not schedule:
         return None
@@ -183,16 +194,16 @@ def parse_schedule_csv(csv_file):
 def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
     cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
-# =============================
-# MODE SELECTION
-# =============================
+# ---------------------------
+# UI / Mode Selection
+# ---------------------------
 st.title("🧠 AI-Powered Attendance System")
 mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
 today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
 
-# =============================
-# SCHEDULE SETTINGS
-# =============================
+# ---------------------------
+# Schedule config UI
+# ---------------------------
 if mode in ["Student", "Teacher"]:
     st.sidebar.subheader("🗂 Schedule Input Method")
     schedule_option = st.sidebar.radio("How would you like to input class periods?", ["Manual", "Upload CSV"])
@@ -221,9 +232,9 @@ if mode in ["Student", "Teacher"]:
     st.sidebar.markdown("---")
     capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
 
-# =============================
-# WEBRTC PROCESSOR
-# =============================
+# ---------------------------
+# WEBRTC VIDEO PROCESSOR
+# ---------------------------
 class AttendanceProcessor(VideoProcessorBase):
     def __init__(self, role, class_schedule):
         self.role = role
@@ -244,7 +255,15 @@ class AttendanceProcessor(VideoProcessorBase):
             if self.role == "Student":
                 period = get_current_period(self.class_schedule)
                 if name and period:
-                    mark_student_db(name, period)
+                    was_inserted, message = mark_student_db(name, period)
+                    # If newly inserted, set session_state tts_text to trigger browser TTS
+                    if was_inserted:
+                        try:
+                            # set a session_state flag for main thread to pick up
+                            st.session_state['tts_text'] = message
+                        except Exception:
+                            # It's possible modifying session_state from this thread may fail silently
+                            pass
                     draw_label(img, f"{name} - {period}", color=(0, 200, 0))
                 elif name and period is None:
                     draw_label(img, f"{name} - Not In Period", color=(0, 165, 255))
@@ -253,7 +272,12 @@ class AttendanceProcessor(VideoProcessorBase):
 
             elif self.role == "Teacher":
                 if name:
-                    mark_teacher_db(name)
+                    was_inserted, message = mark_teacher_db(name)
+                    if was_inserted:
+                        try:
+                            st.session_state['tts_text'] = message
+                        except Exception:
+                            pass
                     draw_label(img, name, color=(255, 0, 0))
                 else:
                     draw_label(img, "Face Not Recognized", color=(0, 0, 255))
@@ -262,9 +286,9 @@ class AttendanceProcessor(VideoProcessorBase):
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-# =============================
-# MODES
-# =============================
+# ---------------------------
+# Modes: Student / Teacher / Logs
+# ---------------------------
 if mode == "Student":
     st.subheader("📚 Student Mode (Real-Time)")
     if capture_source.startswith("Browser"):
@@ -292,6 +316,7 @@ elif mode == "Teacher":
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
 
+    # Reset DB button
     if st.button("🗑 Reset Database"):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -299,21 +324,58 @@ elif mode == "📑 View Attendance Logs":
         c.execute("DROP TABLE IF EXISTS teacher_attendance")
         conn.commit()
         conn.close()
-        init_db()
+        init_db()  # recreate fresh tables
         st.success("✅ Database has been reset!")
 
     tab1, tab2 = st.tabs(["Student Attendance", "Teacher Attendance"])
-
     with tab1:
         df_students = fetch_logs("student_attendance")
         if df_students.empty:
             st.info("No student attendance records yet.")
         else:
             st.dataframe(df_students)
-
     with tab2:
         df_teachers = fetch_logs("teacher_attendance")
         if df_teachers.empty:
             st.info("No teacher attendance records yet.")
         else:
             st.dataframe(df_teachers)
+
+# ---------------------------
+# Browser-side TTS trigger
+# ---------------------------
+# If the processor set st.session_state['tts_text'], play it in the browser using Web Speech API.
+if 'tts_text' in st.session_state and st.session_state.get('tts_text'):
+    # Pop the text so we only play once
+    tts_text = st.session_state.pop('tts_text')
+
+    # Escape the text for JavaScript (basic)
+    safe_text = tts_text.replace("'", "\\'").replace("\n", " ")
+
+    # Insert an invisible HTML block that runs JS to speak the message immediately.
+    # This uses the browser's SpeechSynthesis API (no external calls).
+    js = f"""
+    <script>
+    const msg = '{safe_text}';
+    if ('speechSynthesis' in window) {{
+        const utter = new SpeechSynthesisUtterance(msg);
+        // optional: choose voice, pitch, rate
+        utter.rate = 1.0;
+        utter.pitch = 1.0;
+        // Some browsers require a user gesture before audio; but often works on streamlit interactions.
+        window.speechSynthesis.cancel(); // stop any ongoing speech
+        window.speechSynthesis.speak(utter);
+    }} else {{
+        console.log('SpeechSynthesis not supported in this browser');
+    }}
+    </script>
+    """
+
+    # We use unsafe_allow_html to run script; streamlit will render the script and play audio.
+    st.components.v1.html(js, height=0)
+
+# ---------------------------
+# Small usage hint
+# ---------------------------
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
