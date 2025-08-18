@@ -356,6 +356,9 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
         .replace("\n", " ")
     )
 
+    # 👇 Debug/confirmation line you asked for
+    st.write(f"🔊 Speaking: {safe_text}")
+
     js = f"""
     <script>
     const msg = "{safe_text}";
@@ -382,4 +385,3 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
 # ---------------------------
 #st.sidebar.markdown("---")
 #st.sidebar.markdown("**Notes:**\n\n- Ensure `embeddings.npy` (a dict mapping names->embedding arrays) is present in the app folder on Streamlit Cloud.\n- Browser TTS uses SpeechSynthesis API (no server-side audio). On some browsers, playback may require a user interaction first.\n- If you deploy on Streamlit Cloud, add required packages to `requirements.txt` and upload `embeddings.npy` to the app files.")
-
