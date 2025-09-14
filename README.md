@@ -33,7 +33,6 @@ This system is designed to eliminate the manual and error-prone process of recor
 - CSV logs auto-saved daily
 - Custom class schedules (manual or CSV upload)
 - Face recognition using `facenet-pytorch`
-- Fully local: No cloud API or internet dependency
 - Simple, interactive web interface using Streamlit
 
 ---
