@@ -33,23 +33,6 @@ DB_PATH = "attendance.db"
 INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
 
 # ---------------------------
-# Helpful comment about requirements (add to requirements.txt)
-# ---------------------------
-# requirements.txt should include at least:
-# streamlit
-# streamlit-webrtc
-# facenet-pytorch
-# torch
-# torchvision
-# numpy
-# pandas
-# pillow
-# scikit-learn
-# av
-# gTTS
-# (adapt versions to your environment)
-
-# ---------------------------
 # MODEL + EMBEDDINGS LOADER
 # ---------------------------
 @st.cache_resource(show_spinner=False)
@@ -362,3 +345,4 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
     audio_file = speak_text(tts_text)
     if audio_file:
         st.audio(audio_file, format="audio/mp3", autoplay=True)
+
