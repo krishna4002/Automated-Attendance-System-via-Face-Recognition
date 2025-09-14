@@ -1,4 +1,4 @@
-# app.py  — Real-time Attendance via Browser Webcam (WebRTC) or Local Camera + SQLite Logging
+# app.py  — Real-time Attendance via Browser Webcam (WebRTC) + SQLite Logging
 # Server-side TTS confirmation using gTTS (plays via st.audio).
 
 import os
@@ -12,7 +12,6 @@ import torch
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
-import platform
 from zoneinfo import ZoneInfo   # ✅ timezone support
 from gtts import gTTS
 import tempfile
@@ -33,6 +32,22 @@ DB_PATH = "attendance.db"
 INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
 
 # ---------------------------
+# Helpful comment about requirements (add to requirements.txt)
+# ---------------------------
+# requirements.txt should include at least:
+# streamlit
+# streamlit-webrtc
+# facenet-pytorch
+# torch
+# torchvision
+# numpy
+# pandas
+# pillow
+# scikit-learn
+# av
+# gTTS
+
+# ---------------------------
 # MODEL + EMBEDDINGS LOADER
 # ---------------------------
 @st.cache_resource(show_spinner=False)
@@ -42,7 +57,6 @@ def load_models_and_embeddings():
     model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
     if not os.path.exists('embeddings.npy'):
-        # Don't crash—return empty dict so app still runs and shows message
         st.error("`embeddings.npy` not found. Please upload/generate embeddings.npy in the app folder.")
         return device, mtcnn, model, {}
 
@@ -82,26 +96,17 @@ def init_db():
     conn.close()
 
 def mark_student_db(name, period):
-    """
-    Mark student attendance only once per period per day.
-    Returns (was_inserted: bool, message: str)
-    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
 
-    c.execute("""
-        SELECT 1 FROM student_attendance 
-        WHERE name=? AND period=? AND date=?
-    """, (name, period, today))
+    c.execute("SELECT 1 FROM student_attendance WHERE name=? AND period=? AND date=?", (name, period, today))
     exists = c.fetchone()
 
     if not exists:
-        c.execute("""
-            INSERT INTO student_attendance (name, time, period, date) 
-            VALUES (?, ?, ?, ?)
-        """, (name, now.strftime("%H:%M:%S"), period, today))
+        c.execute("INSERT INTO student_attendance (name, time, period, date) VALUES (?, ?, ?, ?)",
+                  (name, now.strftime("%H:%M:%S"), period, today))
         conn.commit()
         conn.close()
         message = f"Attendance marked for {name} in {period}"
@@ -110,26 +115,17 @@ def mark_student_db(name, period):
     return False, ""
 
 def mark_teacher_db(name):
-    """
-    Mark teacher attendance only once per day.
-    Returns (was_inserted: bool, message: str)
-    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
 
-    c.execute("""
-        SELECT 1 FROM teacher_attendance 
-        WHERE name=? AND date=?
-    """, (name, today))
+    c.execute("SELECT 1 FROM teacher_attendance WHERE name=? AND date=?", (name, today))
     exists = c.fetchone()
 
     if not exists:
-        c.execute("""
-            INSERT INTO teacher_attendance (name, time, date) 
-            VALUES (?, ?, ?)
-        """, (name, now.strftime("%H:%M:%S"), today))
+        c.execute("INSERT INTO teacher_attendance (name, time, date) VALUES (?, ?, ?)",
+                  (name, now.strftime("%H:%M:%S"), today))
         conn.commit()
         conn.close()
         message = f"Attendance marked for {name}"
@@ -225,9 +221,6 @@ if mode in ["Student", "Teacher"]:
             except Exception as e:
                 st.sidebar.error(f"Failed to parse CSV: {e}")
 
-    st.sidebar.markdown("---")
-    capture_source = st.sidebar.selectbox("Camera Source", ["Browser (WebRTC) - recommended", "Local (OpenCV)"])
-
 # ---------------------------
 # WEBRTC VIDEO PROCESSOR
 # ---------------------------
@@ -253,10 +246,7 @@ class AttendanceProcessor(VideoProcessorBase):
                 if name and period:
                     was_inserted, message = mark_student_db(name, period)
                     if was_inserted:
-                        try:
-                            st.session_state['tts_text'] = message
-                        except Exception:
-                            pass
+                        st.session_state['tts_text'] = message
                     draw_label(img, f"{name} - {period}", color=(0, 200, 0))
                 elif name and period is None:
                     draw_label(img, f"{name} - Not In Period", color=(0, 165, 255))
@@ -267,10 +257,7 @@ class AttendanceProcessor(VideoProcessorBase):
                 if name:
                     was_inserted, message = mark_teacher_db(name)
                     if was_inserted:
-                        try:
-                            st.session_state['tts_text'] = message
-                        except Exception:
-                            pass
+                        st.session_state['tts_text'] = message
                     draw_label(img, name, color=(255, 0, 0))
                 else:
                     draw_label(img, "Face Not Recognized", color=(0, 0, 255))
@@ -279,38 +266,30 @@ class AttendanceProcessor(VideoProcessorBase):
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-
 # ---------------------------
 # Modes: Student / Teacher / Logs
 # ---------------------------
 if mode == "Student":
     st.subheader("📚 Student Mode (Real-Time)")
-    if capture_source.startswith("Browser"):
-        webrtc_streamer(
-            key="student_attendance",
-            mode=WebRtcMode.SENDRECV,
-            media_stream_constraints={"video": True, "audio": False},
-            video_processor_factory=lambda: AttendanceProcessor("Student", class_schedule),
-        )
-    else:
-        st.warning("Local camera selected. This only works on your own machine (not on cloud).")
+    webrtc_streamer(
+        key="student_attendance",
+        mode=WebRtcMode.SENDRECV,
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=lambda: AttendanceProcessor("Student", class_schedule),
+    )
 
 elif mode == "Teacher":
     st.subheader("🎓 Teacher Mode (Real-Time)")
-    if capture_source.startswith("Browser"):
-        webrtc_streamer(
-            key="teacher_attendance",
-            mode=WebRtcMode.SENDRECV,
-            media_stream_constraints={"video": True, "audio": False},
-            video_processor_factory=lambda: AttendanceProcessor("Teacher", class_schedule),
-        )
-    else:
-        st.warning("Local camera selected. This only works on your own machine (not on cloud).")
+    webrtc_streamer(
+        key="teacher_attendance",
+        mode=WebRtcMode.SENDRECV,
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=lambda: AttendanceProcessor("Teacher", class_schedule),
+    )
 
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
 
-    # Reset DB button
     if st.button("🗑 Reset Database"):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -318,7 +297,7 @@ elif mode == "📑 View Attendance Logs":
         c.execute("DROP TABLE IF EXISTS teacher_attendance")
         conn.commit()
         conn.close()
-        init_db()  # recreate fresh tables
+        init_db()
         st.success("✅ Database has been reset!")
 
     tab1, tab2 = st.tabs(["Student Attendance", "Teacher Attendance"])
@@ -345,4 +324,3 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
     audio_file = speak_text(tts_text)
     if audio_file:
         st.audio(audio_file, format="audio/mp3", autoplay=True)
-
