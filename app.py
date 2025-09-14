@@ -1,5 +1,4 @@
-# app.py  — Real-time Attendance via Browser Webcam (WebRTC) + SQLite Logging
-# Server-side TTS confirmation using gTTS (plays via st.audio).
+# app.py — Real-time Attendance via Browser Webcam (WebRTC) + SQLite Logging
 
 import os
 import cv2
@@ -12,9 +11,8 @@ import torch
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
-from zoneinfo import ZoneInfo   # ✅ timezone support
-from gtts import gTTS
-import tempfile
+from zoneinfo import ZoneInfo
+import time as py_time
 
 # WebRTC
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
@@ -29,23 +27,8 @@ st.set_page_config(page_title="AI Attendance System", layout="centered")
 # Constants / DB / TZ
 # ---------------------------
 DB_PATH = "attendance.db"
-INDIA_TZ = ZoneInfo("Asia/Kolkata")   # ✅ Set timezone
-
-# ---------------------------
-# Helpful comment about requirements (add to requirements.txt)
-# ---------------------------
-# requirements.txt should include at least:
-# streamlit
-# streamlit-webrtc
-# facenet-pytorch
-# torch
-# torchvision
-# numpy
-# pandas
-# pillow
-# scikit-learn
-# av
-# gTTS
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
+DEBOUNCE_SECONDS = 10 # seconds to wait before marking the same person again
 
 # ---------------------------
 # MODEL + EMBEDDINGS LOADER
@@ -71,67 +54,49 @@ device, mtcnn, model, embedding_dict = load_models_and_embeddings()
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Students table
     c.execute("""
         CREATE TABLE IF NOT EXISTS student_attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT,
             name TEXT,
             time TEXT,
             period TEXT,
             date TEXT,
-            UNIQUE(name, period, date)
+            UNIQUE(student_id, period, date)
         )
     """)
-    # Teachers table
     c.execute("""
         CREATE TABLE IF NOT EXISTS teacher_attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id TEXT,
             name TEXT,
             time TEXT,
             date TEXT,
-            UNIQUE(name, date)
+            UNIQUE(teacher_id, date)
         )
     """)
     conn.commit()
     conn.close()
 
-def mark_student_db(name, period):
+def mark_student_db(student_id, name, period):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
-
-    c.execute("SELECT 1 FROM student_attendance WHERE name=? AND period=? AND date=?", (name, period, today))
-    exists = c.fetchone()
-
-    if not exists:
-        c.execute("INSERT INTO student_attendance (name, time, period, date) VALUES (?, ?, ?, ?)",
-                  (name, now.strftime("%H:%M:%S"), period, today))
-        conn.commit()
-        conn.close()
-        message = f"Attendance marked for {name} in {period}"
-        return True, message
+    c.execute("INSERT OR IGNORE INTO student_attendance (student_id, name, time, period, date) VALUES (?, ?, ?, ?, ?)",
+              (student_id, name, now.strftime("%H:%M:%S"), period, today))
+    conn.commit()
     conn.close()
-    return False, ""
 
-def mark_teacher_db(name):
+def mark_teacher_db(teacher_id, name):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = datetime.now(INDIA_TZ)
     today = now.strftime("%Y-%m-%d")
-
-    c.execute("SELECT 1 FROM teacher_attendance WHERE name=? AND date=?", (name, today))
-    exists = c.fetchone()
-
-    if not exists:
-        c.execute("INSERT INTO teacher_attendance (name, time, date) VALUES (?, ?, ?)",
-                  (name, now.strftime("%H:%M:%S"), today))
-        conn.commit()
-        conn.close()
-        message = f"Attendance marked for {name}"
-        return True, message
+    c.execute("INSERT OR IGNORE INTO teacher_attendance (teacher_id, name, time, date) VALUES (?, ?, ?, ?)",
+              (teacher_id, name, now.strftime("%H:%M:%S"), today))
+    conn.commit()
     conn.close()
-    return False, ""
 
 def fetch_logs(table_name):
     conn = sqlite3.connect(DB_PATH)
@@ -157,10 +122,11 @@ def recognize_face(embedding, embedding_dict, threshold=0.75):
     if not embedding_dict:
         return None
     best_match, highest_similarity = None, 0.0
-    for name, ref_emb in embedding_dict.items():
+    for key, data in embedding_dict.items():
+        ref_emb = data["embedding"]
         sim = cosine_similarity(embedding, ref_emb.reshape(1, -1))[0][0]
         if sim > threshold and sim > highest_similarity:
-            best_match, highest_similarity = name, sim
+            best_match, highest_similarity = data, sim
     return best_match
 
 def parse_schedule_csv(csv_file):
@@ -173,25 +139,14 @@ def parse_schedule_csv(csv_file):
         schedule[name] = (start, end)
     return schedule
 
-def draw_label(img, text, pos=(20, 40), color=(0, 255, 0)):
-    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-
-def speak_text(text):
-    try:
-        tts = gTTS(text=text, lang="en")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-            tts.save(tmp_file.name)
-            return tmp_file.name
-    except Exception as e:
-        st.error(f"❌ TTS Error: {e}")
-        return None
+def draw_label(img, text, y_pos, color=(0, 255, 0), font_scale=0.8, thickness=2):
+    cv2.putText(img, text, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
 
 # ---------------------------
 # UI / Mode Selection
 # ---------------------------
 st.title("🧠 AI-Powered Attendance System")
 mode = st.sidebar.radio("Choose Option", ["Student", "Teacher", "📑 View Attendance Logs"])
-today = datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
 
 # ---------------------------
 # Schedule config UI
@@ -228,41 +183,56 @@ class AttendanceProcessor(VideoProcessorBase):
     def __init__(self, role, class_schedule):
         self.role = role
         self.class_schedule = class_schedule or {}
-
+        # Initialize debounce state outside of the webrtc stream, in session_state
+        if 'last_marked_person' not in st.session_state:
+            st.session_state.last_marked_person = None
+            st.session_state.last_marked_time = 0
+    
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img_pil = Image.fromarray(rgb)
         face = mtcnn(img_pil)
 
+        y_offset = 40 # Initial y position for the label
+
         if face is not None:
             face = face.unsqueeze(0).to(device)
             with torch.no_grad():
                 emb = model(face).cpu().numpy()
-            name = recognize_face(emb, embedding_dict)
+            match = recognize_face(emb, embedding_dict)
 
-            if self.role == "Student":
-                period = get_current_period(self.class_schedule)
-                if name and period:
-                    was_inserted, message = mark_student_db(name, period)
-                    if was_inserted:
-                        st.session_state['tts_text'] = message
-                    draw_label(img, f"{name} - {period}", color=(0, 200, 0))
-                elif name and period is None:
-                    draw_label(img, f"{name} - Not In Period", color=(0, 165, 255))
-                else:
-                    draw_label(img, "Face Not Recognized", color=(0, 0, 255))
+            if match:
+                person_id = match["id"]
+                person_name = match["name"].replace(" ", "_")
+                label = f"{person_name} (ID: {person_id})"
+                
+                # Check current time for debouncing
+                current_time = py_time.time()
+                is_same_person = (st.session_state.last_marked_person == person_id)
+                time_since_last_mark = current_time - st.session_state.last_marked_time
+                
+                if not is_same_person or time_since_last_mark > DEBOUNCE_SECONDS:
+                    # Update session state to prevent immediate re-marking
+                    st.session_state.last_marked_person = person_id
+                    st.session_state.last_marked_time = current_time
 
-            elif self.role == "Teacher":
-                if name:
-                    was_inserted, message = mark_teacher_db(name)
-                    if was_inserted:
-                        st.session_state['tts_text'] = message
-                    draw_label(img, name, color=(255, 0, 0))
+                    if self.role == "Student":
+                        period = get_current_period(self.class_schedule)
+                        if period:
+                            mark_student_db(person_id, person_name, period)
+                            draw_label(img, f"{label} - ATTENDANCE MARKED", y_offset, color=(0, 255, 0))
+                        else:
+                            draw_label(img, f"{label} - Not in Period", y_offset, color=(0, 0, 255))
+                    elif self.role == "Teacher":
+                        mark_teacher_db(person_id, person_name)
+                        draw_label(img, f"{label} - ATTENDANCE MARKED", y_offset, color=(0, 255, 0))
                 else:
-                    draw_label(img, "Face Not Recognized", color=(0, 0, 255))
+                    draw_label(img, f"{label} - already Present", y_offset, color=(255, 0, 0))
+            else:
+                draw_label(img, "Face Not Recognized", y_offset, color=(0, 0, 255))
         else:
-            draw_label(img, "No face detected", color=(0, 0, 255))
+            draw_label(img, "No Face Detected",y_offset, color=(0, 0, 255))
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
@@ -271,6 +241,7 @@ class AttendanceProcessor(VideoProcessorBase):
 # ---------------------------
 if mode == "Student":
     st.subheader("📚 Student Mode (Real-Time)")
+    st.write("Camera will run continuously to detect faces and mark attendance during active periods.")
     webrtc_streamer(
         key="student_attendance",
         mode=WebRtcMode.SENDRECV,
@@ -280,6 +251,7 @@ if mode == "Student":
 
 elif mode == "Teacher":
     st.subheader("🎓 Teacher Mode (Real-Time)")
+    st.write("Camera will run continuously to detect faces and mark attendance.")
     webrtc_streamer(
         key="teacher_attendance",
         mode=WebRtcMode.SENDRECV,
@@ -289,7 +261,6 @@ elif mode == "Teacher":
 
 elif mode == "📑 View Attendance Logs":
     st.subheader("📑 Attendance Logs")
-
     if st.button("🗑 Reset Database"):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -313,14 +284,3 @@ elif mode == "📑 View Attendance Logs":
             st.info("No teacher attendance records yet.")
         else:
             st.dataframe(df_teachers)
-
-# ---------------------------
-# Server-side TTS trigger (gTTS)
-# ---------------------------
-if "tts_text" in st.session_state and st.session_state.get("tts_text"):
-    tts_text = st.session_state.pop("tts_text")
-    st.write(f"🔊 Speaking: {tts_text}")
-
-    audio_file = speak_text(tts_text)
-    if audio_file:
-        st.audio(audio_file, format="audio/mp3", autoplay=True)
