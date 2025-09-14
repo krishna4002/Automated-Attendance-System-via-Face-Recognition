@@ -225,7 +225,7 @@ if mode in ["Student", "Teacher"]:
 # WEBRTC VIDEO PROCESSOR
 # ---------------------------
 class AttendanceProcessor(VideoProcessorBase):
-    def _init_(self, role, class_schedule):
+    def __init__(self, role, class_schedule):
         self.role = role
         self.class_schedule = class_schedule or {}
 
@@ -324,3 +324,4 @@ if "tts_text" in st.session_state and st.session_state.get("tts_text"):
     audio_file = speak_text(tts_text)
     if audio_file:
         st.audio(audio_file, format="audio/mp3", autoplay=True)
+
